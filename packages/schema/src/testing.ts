@@ -54,8 +54,18 @@ export const sampleProject: EntityInput<'project'> = {
   overrides: { executor: { effort: 'high', limits: { maxIterations: 40 } } },
   workflow: {
     nodes: [
-      { id: 'in', type: 'input', name: 'Task', payloadType: 'text', content: 'Add a /health route' },
-      { id: 'planner', type: 'agent', binding: { kind: 'agent', agent: { kind: 'agent', id: PLANNER_ID, version: 'v1' } } },
+      {
+        id: 'in',
+        type: 'input',
+        name: 'Task',
+        payloadType: 'text',
+        content: 'Add a /health route',
+      },
+      {
+        id: 'planner',
+        type: 'agent',
+        binding: { kind: 'agent', agent: { kind: 'agent', id: PLANNER_ID, version: 'v1' } },
+      },
       { id: 'plan', type: 'artifact', path: 'PLAN.md', fileType: 'markdown' },
       {
         id: 'executor',
@@ -63,7 +73,12 @@ export const sampleProject: EntityInput<'project'> = {
         join: { mode: 'any' },
         binding: { kind: 'agent', agent: { kind: 'agent', id: EXECUTOR_ID, version: 'v2' } },
       },
-      { id: 'tests', type: 'toolStep', tool: { kind: 'tool', id: SHELL_TOOL_ID, version: 'v1' }, args: { command: 'npm test' } },
+      {
+        id: 'tests',
+        type: 'toolStep',
+        tool: { kind: 'tool', id: SHELL_TOOL_ID, version: 'v1' },
+        args: { command: 'npm test' },
+      },
       {
         id: 'pass',
         type: 'decision',
@@ -77,8 +92,20 @@ export const sampleProject: EntityInput<'project'> = {
       { id: 'note', type: 'note', text: 'Executor retries at most 3 times.' },
     ],
     edges: [
-      { id: 'e1', source: { node: 'in' }, target: { node: 'planner' }, payload: 'text', context: { mode: 'full' } },
-      { id: 'e2', source: { node: 'planner' }, target: { node: 'plan' }, payload: 'file', context: { mode: 'full' } },
+      {
+        id: 'e1',
+        source: { node: 'in' },
+        target: { node: 'planner' },
+        payload: 'text',
+        context: { mode: 'full' },
+      },
+      {
+        id: 'e2',
+        source: { node: 'planner' },
+        target: { node: 'plan' },
+        payload: 'file',
+        context: { mode: 'full' },
+      },
       {
         id: 'e3',
         source: { node: 'plan' },
@@ -86,9 +113,27 @@ export const sampleProject: EntityInput<'project'> = {
         payload: 'file',
         context: { mode: 'excerpt', selector: { kind: 'heading', heading: '## Tasks' } },
       },
-      { id: 'e4', source: { node: 'executor' }, target: { node: 'tests' }, payload: 'none', context: { mode: 'full' } },
-      { id: 'e5', source: { node: 'tests' }, target: { node: 'pass' }, payload: 'text', context: { mode: 'full' } },
-      { id: 'e6', source: { node: 'pass', port: 'yes' }, target: { node: 'out' }, payload: 'code', context: { mode: 'diff', base: 'workspace-head' } },
+      {
+        id: 'e4',
+        source: { node: 'executor' },
+        target: { node: 'tests' },
+        payload: 'none',
+        context: { mode: 'full' },
+      },
+      {
+        id: 'e5',
+        source: { node: 'tests' },
+        target: { node: 'pass' },
+        payload: 'text',
+        context: { mode: 'full' },
+      },
+      {
+        id: 'e6',
+        source: { node: 'pass', port: 'yes' },
+        target: { node: 'out' },
+        payload: 'code',
+        context: { mode: 'diff', base: 'workspace-head' },
+      },
       {
         id: 'e7',
         source: { node: 'pass', port: 'no' },
@@ -110,7 +155,15 @@ export const samplePattern: EntityInput<'pattern'> = {
   workflow: {
     nodes: [
       { id: 'in', type: 'input', name: 'Task', payloadType: 'text' },
-      { id: 'maker', type: 'agent', binding: { kind: 'slot', role: 'Maker', defaultAgent: { kind: 'agent', id: EXECUTOR_ID, version: 'v1' } } },
+      {
+        id: 'maker',
+        type: 'agent',
+        binding: {
+          kind: 'slot',
+          role: 'Maker',
+          defaultAgent: { kind: 'agent', id: EXECUTOR_ID, version: 'v1' },
+        },
+      },
       { id: 'checker', type: 'agent', binding: { kind: 'slot', role: 'Checker' } },
       {
         id: 'approved',
@@ -124,11 +177,42 @@ export const samplePattern: EntityInput<'pattern'> = {
       { id: 'out', type: 'output', name: 'Result', payloadType: 'text' },
     ],
     edges: [
-      { id: 'e1', source: { node: 'in' }, target: { node: 'maker' }, payload: 'text', context: { mode: 'full' } },
-      { id: 'e2', source: { node: 'maker' }, target: { node: 'checker' }, payload: 'text', context: { mode: 'full' } },
-      { id: 'e3', source: { node: 'checker' }, target: { node: 'approved' }, payload: 'text', context: { mode: 'full' } },
-      { id: 'e4', source: { node: 'approved', port: 'yes' }, target: { node: 'out' }, payload: 'text', context: { mode: 'full' } },
-      { id: 'e5', source: { node: 'approved', port: 'no' }, target: { node: 'maker' }, payload: 'text', context: { mode: 'outcome-only' }, history: 'all' },
+      {
+        id: 'e1',
+        source: { node: 'in' },
+        target: { node: 'maker' },
+        payload: 'text',
+        context: { mode: 'full' },
+      },
+      {
+        id: 'e2',
+        source: { node: 'maker' },
+        target: { node: 'checker' },
+        payload: 'text',
+        context: { mode: 'full' },
+      },
+      {
+        id: 'e3',
+        source: { node: 'checker' },
+        target: { node: 'approved' },
+        payload: 'text',
+        context: { mode: 'full' },
+      },
+      {
+        id: 'e4',
+        source: { node: 'approved', port: 'yes' },
+        target: { node: 'out' },
+        payload: 'text',
+        context: { mode: 'full' },
+      },
+      {
+        id: 'e5',
+        source: { node: 'approved', port: 'no' },
+        target: { node: 'maker' },
+        payload: 'text',
+        context: { mode: 'outcome-only' },
+        history: 'all',
+      },
     ],
   },
   layout: { nodes: {} },
@@ -143,7 +227,11 @@ export const sampleTemplate: EntityInput<'template'> = {
       {
         id: 'route',
         type: 'decision',
-        evaluator: { type: 'agent', agent: { kind: 'agent', agent: { kind: 'agent', id: PLANNER_ID, version: 'v1' } }, criteria: 'Classify the ticket' },
+        evaluator: {
+          type: 'agent',
+          agent: { kind: 'agent', agent: { kind: 'agent', id: PLANNER_ID, version: 'v1' } },
+          criteria: 'Classify the ticket',
+        },
         exits: [
           { id: 'bug', label: 'bug' },
           { id: 'feature', label: 'feature' },
@@ -158,14 +246,44 @@ export const sampleTemplate: EntityInput<'template'> = {
           checker: { kind: 'agent', agent: { kind: 'agent', id: PLANNER_ID, version: 'v1' } },
         },
       },
-      { id: 'human', type: 'humanInput', instructions: 'Describe the bug', fields: [{ id: 'steps', label: 'Steps', kind: 'longText' }] },
+      {
+        id: 'human',
+        type: 'humanInput',
+        instructions: 'Describe the bug',
+        fields: [{ id: 'steps', label: 'Steps', kind: 'longText' }],
+      },
       { id: 'board', type: 'sharedStore', name: 'Notes', format: 'markdown' },
     ],
     edges: [
-      { id: 'e1', source: { node: 'in' }, target: { node: 'route' }, payload: 'text', context: { mode: 'full' } },
-      { id: 'e2', source: { node: 'route', port: 'feature' }, target: { node: 'mc', port: 'in' }, payload: 'text', context: { mode: 'full' } },
-      { id: 'e3', source: { node: 'route', port: 'bug' }, target: { node: 'human' }, payload: 'text', context: { mode: 'reference' } },
-      { id: 'e4', source: { node: 'human' }, target: { node: 'board' }, payload: 'text', context: { mode: 'full' }, access: 'write' },
+      {
+        id: 'e1',
+        source: { node: 'in' },
+        target: { node: 'route' },
+        payload: 'text',
+        context: { mode: 'full' },
+      },
+      {
+        id: 'e2',
+        source: { node: 'route', port: 'feature' },
+        target: { node: 'mc', port: 'in' },
+        payload: 'text',
+        context: { mode: 'full' },
+      },
+      {
+        id: 'e3',
+        source: { node: 'route', port: 'bug' },
+        target: { node: 'human' },
+        payload: 'text',
+        context: { mode: 'reference' },
+      },
+      {
+        id: 'e4',
+        source: { node: 'human' },
+        target: { node: 'board' },
+        payload: 'text',
+        context: { mode: 'full' },
+        access: 'write',
+      },
     ],
   },
   layout: { nodes: {}, expanded: ['mc'] },

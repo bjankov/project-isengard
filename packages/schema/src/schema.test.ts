@@ -52,7 +52,11 @@ describe('entities', () => {
   });
 
   it('rejects skill names that break the Agent Skills format', () => {
-    const r = safeParseEntity('skill', { ...SAMPLE_INPUTS.skill, id: 'a-aaaaaa', name: 'Write Tests' });
+    const r = safeParseEntity('skill', {
+      ...SAMPLE_INPUTS.skill,
+      id: 'a-aaaaaa',
+      name: 'Write Tests',
+    });
     expect(r.success).toBe(false);
   });
 
@@ -65,15 +69,30 @@ describe('entities', () => {
 
   it('rejects path scopes outside the workspace', () => {
     for (const bad of ['/etc/**', '../secrets', 'src/../../x']) {
-      const r = ToolPreset.safeParse({ id: 'a-aaaaaa', name: 'x', builtin: 'read_file', scope: { paths: [bad] } });
+      const r = ToolPreset.safeParse({
+        id: 'a-aaaaaa',
+        name: 'x',
+        builtin: 'read_file',
+        scope: { paths: [bad] },
+      });
       expect(r.success, bad).toBe(false);
     }
   });
 
   it('rejects scope shapes that do not match the built-in', () => {
-    const r = ToolPreset.safeParse({ id: 'a-aaaaaa', name: 'x', builtin: 'shell', scope: { paths: ['src/**'] } });
+    const r = ToolPreset.safeParse({
+      id: 'a-aaaaaa',
+      name: 'x',
+      builtin: 'shell',
+      scope: { paths: ['src/**'] },
+    });
     expect(r.success).toBe(false);
-    const r2 = ToolPreset.safeParse({ id: 'a-aaaaaa', name: 'x', builtin: 'read_file', scope: { commands: [] } });
+    const r2 = ToolPreset.safeParse({
+      id: 'a-aaaaaa',
+      name: 'x',
+      builtin: 'read_file',
+      scope: { commands: [] },
+    });
     expect(r2.success).toBe(false);
   });
 
@@ -94,7 +113,15 @@ describe('workflow graph', () => {
         { id: 'a', type: 'note', text: '' },
         { id: 'a', type: 'note', text: '' },
       ],
-      edges: [{ id: 'e', source: { node: 'a' }, target: { node: 'zzz' }, payload: 'none', context: { mode: 'full' } }],
+      edges: [
+        {
+          id: 'e',
+          source: { node: 'a' },
+          target: { node: 'zzz' },
+          payload: 'none',
+          context: { mode: 'full' },
+        },
+      ],
     });
     expect(r.success).toBe(false);
     const messages = r.error!.issues.map((i) => i.message).join('\n');
@@ -108,7 +135,15 @@ describe('workflow graph', () => {
         { id: 'a', type: 'note' },
         { id: 'b', type: 'note' },
       ],
-      edges: [{ id: 'e', source: { node: 'a' }, target: { node: 'b' }, payload: 'text', context: { mode: 'excerpt' } }],
+      edges: [
+        {
+          id: 'e',
+          source: { node: 'a' },
+          target: { node: 'b' },
+          payload: 'text',
+          context: { mode: 'excerpt' },
+        },
+      ],
     });
     expect(r.success).toBe(false);
   });
@@ -123,11 +158,17 @@ describe('collectRefs', () => {
   it('collects refs from every node kind that has them, deduplicated', () => {
     const t = parseEntity('template', { ...SAMPLE_INPUTS.template, id: 't-aaaaaa' });
     const refs = collectRefs('template', t).map((r) => `${r.kind}/${r.id}@${r.version}`);
-    expect(refs).toEqual(['agent/planner-dddddd@v1', 'pattern/maker-checker-ffffff@v1', 'agent/executor-eeeeee@v1']);
+    expect(refs).toEqual([
+      'agent/planner-dddddd@v1',
+      'pattern/maker-checker-ffffff@v1',
+      'agent/executor-eeeeee@v1',
+    ]);
   });
 
   it('includes slot default agents in patterns', () => {
     const p = parseEntity('pattern', { ...SAMPLE_INPUTS.pattern, id: 'p-aaaaaa' });
-    expect(collectRefs('pattern', p)).toEqual([{ kind: 'agent', id: 'executor-eeeeee', version: 'v1' }]);
+    expect(collectRefs('pattern', p)).toEqual([
+      { kind: 'agent', id: 'executor-eeeeee', version: 'v1' },
+    ]);
   });
 });

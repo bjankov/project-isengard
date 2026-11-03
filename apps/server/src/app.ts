@@ -76,7 +76,9 @@ export async function buildApp(
 
   app.get<{ Params: { kinds: string }; Querystring: { q?: string } }>(
     '/api/:kinds',
-    async (req): Promise<ListResponse> => ({ items: store.list(kindParam(req.params.kinds), req.query.q) }),
+    async (req): Promise<ListResponse> => ({
+      items: store.list(kindParam(req.params.kinds), req.query.q),
+    }),
   );
 
   app.post<{ Params: { kinds: string }; Body: unknown }>('/api/:kinds', async (req, reply) => {
@@ -88,8 +90,9 @@ export async function buildApp(
     store.get(kindParam(req.params.kinds), req.params.id),
   );
 
-  app.put<{ Params: { kinds: string; id: string }; Body: unknown }>('/api/:kinds/:id', async (req) =>
-    store.update(kindParam(req.params.kinds), req.params.id, req.body),
+  app.put<{ Params: { kinds: string; id: string }; Body: unknown }>(
+    '/api/:kinds/:id',
+    async (req) => store.update(kindParam(req.params.kinds), req.params.id, req.body),
   );
 
   app.delete<{ Params: { kinds: string; id: string } }>('/api/:kinds/:id', async (req) =>

@@ -60,6 +60,12 @@ function layoutOf<K extends EntityKind>(kind: K): KindLayout<K> {
   return LAYOUTS[kind] as KindLayout<K>;
 }
 
+/** Creates and deletes always change files, so a missing commit is a bug. */
+function requireCommit(commit: CommitInfo | null, action: string): CommitInfo {
+  if (!commit) throw new Error(`${action} produced no changes to commit`);
+  return commit;
+}
+
 function describe<K extends EntityKind>(kind: K, entity: EntityByKind[K]): string {
   return `${kind} ${entity.id} (${entity.name})`;
 }
@@ -123,12 +129,17 @@ export class LibraryStore {
   }
 
   /** Read and validate an entity at a git ref. Undefined when it does not exist there. */
-  private async read<K extends EntityKind>(kind: K, id: string, ref: string): Promise<EntityByKind[K] | undefined> {
+  private async read<K extends EntityKind>(
+    kind: K,
+    id: string,
+    ref: string,
+  ): Promise<EntityByKind[K] | undefined> {
     const layout = layoutOf(kind);
     const present = await this.git.listFiles(layout.root(id), ref);
     if (present.length === 0) return undefined;
     const files: Record<string, string | undefined> = {};
-    for (const f of layout.files(id)) files[f] = present.includes(f) ? await this.git.readFile(f, ref) : undefined;
+    for (const f of layout.files(id))
+      files[f] = present.includes(f) ? await this.git.readFile(f, ref) : undefined;
     const result = safeParseEntity(kind, layout.deserialize(id, files));
     if (!result.success) {
       throw new EntityValidationError(`stored ${kind} "${id}" is invalid`, result.error);
@@ -149,14 +160,18 @@ export class LibraryStore {
     return result.data;
   }
 
-  async create<K extends EntityKind>(kind: K, input: unknown): Promise<{ entity: EntityByKind[K]; commit: CommitInfo }> {
+  async create<K extends EntityKind>(
+    kind: K,
+    input: unknown,
+  ): Promise<{ entity: EntityByKind[K]; commit: CommitInfo }> {
     const name = (input as { name?: unknown } | null)?.name;
     return this.git.exclusive(async () => {
       let id = makeEntityId(typeof name === 'string' ? name : kind);
       while (await this.exists(kind, id)) id = makeEntityId(typeof name === 'string' ? name : kind);
       const entity = this.validate(kind, id, input);
-      const commit = await this.writeAndCommit(kind, entity, `Create ${describe(kind, entity)}`);
-      return { entity, commit: commit! };
+      const message = `Create ${describe(kind, entity)}`;
+      const commit = requireCommit(await this.writeAndCommit(kind, entity, message), message);
+      return { entity, commit };
     });
   }
 
@@ -181,9 +196,10 @@ export class LibraryStore {
       const summary = this.index.list(kind).find((s) => s.id === id);
       try {
         await rm(join(this.git.dir, root), { recursive: true, force: true });
-        const commit = await this.git.commitPaths([root], `Delete ${kind} ${id}${summary ? ` (${summary.name})` : ''}`);
-        this.index.remove(kind, id, commit!.hash);
-        return { commit: commit! };
+        const message = `Delete ${kind} ${id}${summary ? ` (${summary.name})` : ''}`;
+        const commit = requireCommit(await this.git.commitPaths([root], message), message);
+        this.index.remove(kind, id, commit.hash);
+        return { commit };
       } catch (err) {
         await this.git.discard([root]);
         throw err;

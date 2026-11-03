@@ -58,12 +58,17 @@ export class LibraryIndex {
   }
 
   private getMeta(key: string): string | undefined {
-    const row = this.db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as { value: string } | undefined;
+    const row = this.db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as
+      { value: string } | undefined;
     return row?.value;
   }
 
   private setMeta(key: string, value: string): void {
-    this.db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
+    this.db
+      .prepare(
+        'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+      )
+      .run(key, value);
   }
 
   /** The library commit this index reflects. */
@@ -126,7 +131,9 @@ export class LibraryIndex {
           )
           .all(kind, ...Array<string>(3).fill(`%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`))
       : this.db
-          .prepare('SELECT kind, id, name, description FROM entities WHERE kind = ? ORDER BY name COLLATE NOCASE, id')
+          .prepare(
+            'SELECT kind, id, name, description FROM entities WHERE kind = ? ORDER BY name COLLATE NOCASE, id',
+          )
           .all(kind);
     return rows as EntitySummary[];
   }

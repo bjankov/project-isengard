@@ -23,11 +23,36 @@ export interface BuiltinTool {
 }
 
 export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
-  { id: 'read_file', name: 'Read file', description: 'Read files in the workspace.', scopeKind: 'paths' },
-  { id: 'write_file', name: 'Write file', description: 'Create or overwrite files in the workspace.', scopeKind: 'paths' },
-  { id: 'edit_file', name: 'Edit file', description: 'Edit existing files in the workspace.', scopeKind: 'paths' },
-  { id: 'search_files', name: 'Search files', description: 'Glob and grep across workspace files.', scopeKind: 'paths' },
-  { id: 'shell', name: 'Shell', description: 'Run shell commands in the workspace.', scopeKind: 'commands' },
+  {
+    id: 'read_file',
+    name: 'Read file',
+    description: 'Read files in the workspace.',
+    scopeKind: 'paths',
+  },
+  {
+    id: 'write_file',
+    name: 'Write file',
+    description: 'Create or overwrite files in the workspace.',
+    scopeKind: 'paths',
+  },
+  {
+    id: 'edit_file',
+    name: 'Edit file',
+    description: 'Edit existing files in the workspace.',
+    scopeKind: 'paths',
+  },
+  {
+    id: 'search_files',
+    name: 'Search files',
+    description: 'Glob and grep across workspace files.',
+    scopeKind: 'paths',
+  },
+  {
+    id: 'shell',
+    name: 'Shell',
+    description: 'Run shell commands in the workspace.',
+    scopeKind: 'commands',
+  },
   { id: 'web_search', name: 'Web search', description: 'Search the web.', scopeKind: 'domains' },
   { id: 'web_fetch', name: 'Web fetch', description: 'Fetch a web page.', scopeKind: 'domains' },
 ];
@@ -40,9 +65,11 @@ export const WorkspaceGlob = z
   .refine((p) => !p.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(p), 'must be workspace-relative')
   .refine((p) => !p.split(/[\\/]/).includes('..'), 'must not contain ".."');
 
-export const PathScope = z.object({
-  paths: z.array(WorkspaceGlob).min(1),
-}).strict();
+export const PathScope = z
+  .object({
+    paths: z.array(WorkspaceGlob).min(1),
+  })
+  .strict();
 export type PathScope = z.infer<typeof PathScope>;
 
 export const ShellCommandRule = z.object({
@@ -52,21 +79,28 @@ export const ShellCommandRule = z.object({
 export type ShellCommandRule = z.infer<typeof ShellCommandRule>;
 
 /** An empty allowlist means unrestricted shell (allowed, but always flagged). */
-export const ShellScope = z.object({
-  commands: z.array(ShellCommandRule).default([]),
-}).strict();
+export const ShellScope = z
+  .object({
+    commands: z.array(ShellCommandRule).default([]),
+  })
+  .strict();
 export type ShellScope = z.infer<typeof ShellScope>;
 
 export const Domain = z
   .string()
   .trim()
   .toLowerCase()
-  .regex(/^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/, 'expected a domain such as "example.com" or "*.example.com"');
+  .regex(
+    /^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/,
+    'expected a domain such as "example.com" or "*.example.com"',
+  );
 
-export const DomainScope = z.object({
-  allow: z.array(Domain).default([]),
-  deny: z.array(Domain).default([]),
-}).strict();
+export const DomainScope = z
+  .object({
+    allow: z.array(Domain).default([]),
+    deny: z.array(Domain).default([]),
+  })
+  .strict();
 export type DomainScope = z.infer<typeof DomainScope>;
 
 const presetBase = EntityMeta;

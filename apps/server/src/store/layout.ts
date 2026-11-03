@@ -103,7 +103,13 @@ function graphLayout<K extends 'pattern' | 'template'>(dir: string, file: string
     files: (id) => [sem(id), lay(id)],
     deserialize: (id, files) => {
       const { name, description, nodes, edges } = fromYaml(files[sem(id)]);
-      return { id, name, description, workflow: { nodes, edges }, layout: fromJson(files[lay(id)]) ?? {} };
+      return {
+        id,
+        name,
+        description,
+        workflow: { nodes, edges },
+        layout: fromJson(files[lay(id)]) ?? {},
+      };
     },
   };
 }
@@ -117,7 +123,11 @@ const projects: KindLayout<'project'> = {
     [`projects/${id}/workflow.yaml`]: toYaml(workflow),
     [`projects/${id}/layout.json`]: toJson(layout),
   }),
-  files: (id) => [`projects/${id}/project.yaml`, `projects/${id}/workflow.yaml`, `projects/${id}/layout.json`],
+  files: (id) => [
+    `projects/${id}/project.yaml`,
+    `projects/${id}/workflow.yaml`,
+    `projects/${id}/layout.json`,
+  ],
   deserialize: (id, files) => ({
     ...fromYaml(files[`projects/${id}/project.yaml`]),
     id,

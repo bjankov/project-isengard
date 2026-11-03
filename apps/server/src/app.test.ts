@@ -9,7 +9,13 @@ import {
   type EntitySummary,
   type ReferencesResponse,
 } from '@app/schema';
-import { SAMPLE_INPUTS, sampleAgent, sampleProject, sampleReadTool, sampleSkill } from '@app/schema/testing';
+import {
+  SAMPLE_INPUTS,
+  sampleAgent,
+  sampleProject,
+  sampleReadTool,
+  sampleSkill,
+} from '@app/schema/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp, type BuiltApp } from './app.js';
 import { loadConfig, type AppConfig } from './config.js';
@@ -33,14 +39,25 @@ async function stop(): Promise<void> {
   built = undefined;
 }
 
-async function api<T = unknown>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', url: string, body?: unknown) {
-  const res = await built!.app.inject({ method, url, ...(body === undefined ? {} : { payload: body as object }) });
+async function api<T = unknown>(
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  url: string,
+  body?: unknown,
+) {
+  const res = await built!.app.inject({
+    method,
+    url,
+    ...(body === undefined ? {} : { payload: body as object }),
+  });
   return { status: res.statusCode, body: (res.body ? res.json() : undefined) as T };
 }
 
-function listAll(): Promise<Record<string, EntitySummary[]>> {
+function listAll(): Promise<Record<EntityKind, EntitySummary[]>> {
   return Promise.all(
-    ENTITY_KINDS.map(async (k) => [k, (await api<{ items: EntitySummary[] }>('GET', `/api/${KIND_PLURALS[k]}`)).body.items]),
+    ENTITY_KINDS.map(async (k) => [
+      k,
+      (await api<{ items: EntitySummary[] }>('GET', `/api/${KIND_PLURALS[k]}`)).body.items,
+    ]),
   ).then(Object.fromEntries);
 }
 
@@ -92,7 +109,11 @@ const EXPECTED_FILES: Record<EntityKind, (id: string) => string[]> = {
   agent: (id) => [`agents/${id}.yaml`],
   pattern: (id) => [`patterns/${id}/pattern.yaml`, `patterns/${id}/layout.json`],
   template: (id) => [`templates/${id}/workflow.yaml`, `templates/${id}/layout.json`],
-  project: (id) => [`projects/${id}/project.yaml`, `projects/${id}/workflow.yaml`, `projects/${id}/layout.json`],
+  project: (id) => [
+    `projects/${id}/project.yaml`,
+    `projects/${id}/workflow.yaml`,
+    `projects/${id}/layout.json`,
+  ],
 };
 
 describe.each(ENTITY_KINDS)('CRUD for %s', (kind) => {
@@ -103,7 +124,11 @@ describe.each(ENTITY_KINDS)('CRUD for %s', (kind) => {
     await start();
 
     // create
-    const created = await api<{ entity: { id: string; name: string }; commit: { hash: string } }>('POST', `/api/${plural}`, input);
+    const created = await api<{ entity: { id: string; name: string }; commit: { hash: string } }>(
+      'POST',
+      `/api/${plural}`,
+      input,
+    );
     expect(created.status).toBe(201);
     const { id } = created.body.entity;
     const files = EXPECTED_FILES[kind](id);
@@ -121,11 +146,10 @@ describe.each(ENTITY_KINDS)('CRUD for %s', (kind) => {
 
     // update
     const renamed = kind === 'skill' ? 'renamed-skill' : 'Renamed';
-    const updated = await api<{ entity: { id: string; name: string }; commit: { message: string } }>(
-      'PUT',
-      `/api/${plural}/${id}`,
-      { ...input, name: renamed },
-    );
+    const updated = await api<{
+      entity: { id: string; name: string };
+      commit: { message: string };
+    }>('PUT', `/api/${plural}/${id}`, { ...input, name: renamed });
     expect(updated.status).toBe(200);
     expect(updated.body.entity).toMatchObject({ id, name: renamed });
     expect(updated.body.commit.message).toBe(`Update ${kind} ${id} (${renamed})`);
@@ -134,7 +158,10 @@ describe.each(ENTITY_KINDS)('CRUD for %s', (kind) => {
 
     // no-op update makes no commit
     const head = git('rev-parse', 'HEAD').trim();
-    const noop = await api<{ commit: unknown }>('PUT', `/api/${plural}/${id}`, { ...input, name: renamed });
+    const noop = await api<{ commit: unknown }>('PUT', `/api/${plural}/${id}`, {
+      ...input,
+      name: renamed,
+    });
     expect(noop.body.commit).toBeNull();
     expect(git('rev-parse', 'HEAD').trim()).toBe(head);
 
@@ -175,16 +202,24 @@ describe('API errors', () => {
 
   it('ignores an id in the body; the path id wins', async () => {
     await start();
-    const { body } = await api<{ entity: { id: string } }>('POST', '/api/tools', { ...sampleReadTool, id: 'evil-aaaaaa' });
+    const { body } = await api<{ entity: { id: string } }>('POST', '/api/tools', {
+      ...sampleReadTool,
+      id: 'evil-aaaaaa',
+    });
     expect(body.entity.id).not.toBe('evil-aaaaaa');
-    const upd = await api<{ entity: { id: string } }>('PUT', `/api/tools/${body.entity.id}`, { ...sampleReadTool, id: 'evil-aaaaaa' });
+    const upd = await api<{ entity: { id: string } }>('PUT', `/api/tools/${body.entity.id}`, {
+      ...sampleReadTool,
+      id: 'evil-aaaaaa',
+    });
     expect(upd.body.entity.id).toBe(body.entity.id);
   });
 
   it('serializes concurrent writes', async () => {
     await start();
     const results = await Promise.all(
-      Array.from({ length: 8 }, (_, i) => api('POST', '/api/tools', { ...sampleReadTool, name: `Tool ${i}` })),
+      Array.from({ length: 8 }, (_, i) =>
+        api('POST', '/api/tools', { ...sampleReadTool, name: `Tool ${i}` }),
+      ),
     );
     expect(results.every((r) => r.status === 201)).toBe(true);
     expect(git('rev-list', '--count', 'HEAD').trim()).toBe('9');
@@ -196,9 +231,13 @@ describe('files', () => {
   it('stores skills as SKILL.md with Agent Skills frontmatter', async () => {
     await start();
     const { body } = await api<{ entity: { id: string } }>('POST', '/api/skills', sampleSkill);
-    const text = readFileSync(join(config.libraryDir, 'skills', body.entity.id, 'SKILL.md'), 'utf8');
+    const text = readFileSync(
+      join(config.libraryDir, 'skills', body.entity.id, 'SKILL.md'),
+      'utf8',
+    );
     expect(text).toBe(
-      '---\nname: write-unit-tests\ndescription: Write focused unit tests for changed code.\n---\n\n' + sampleSkill.body,
+      '---\nname: write-unit-tests\ndescription: Write focused unit tests for changed code.\n---\n\n' +
+        sampleSkill.body,
     );
   });
 
@@ -207,7 +246,9 @@ describe('files', () => {
     const { body } = await api<{ entity: { id: string } }>('POST', '/api/projects', sampleProject);
     const moved = { ...sampleProject, layout: { nodes: { in: { x: 500, y: 500 } } } };
     await api('PUT', `/api/projects/${body.entity.id}`, moved);
-    expect(git('show', '--name-only', '--format=', 'HEAD').trim()).toBe(`projects/${body.entity.id}/layout.json`);
+    expect(git('show', '--name-only', '--format=', 'HEAD').trim()).toBe(
+      `projects/${body.entity.id}/layout.json`,
+    );
   });
 });
 
@@ -223,7 +264,11 @@ describe('index', () => {
     for (const kind of ['pattern', 'template', 'project'] as const) {
       await api('POST', `/api/${KIND_PLURALS[kind]}`, SAMPLE_INPUTS[kind]);
     }
-    return { skillId: skill.body.entity.id, toolId: tool.body.entity.id, agentId: agent.body.entity.id };
+    return {
+      skillId: skill.body.entity.id,
+      toolId: tool.body.entity.id,
+      agentId: agent.body.entity.id,
+    };
   }
 
   it('answers reference lookups in both directions', async () => {
@@ -265,7 +310,10 @@ describe('index', () => {
     await seed();
     const before = await listAll();
     rmSync(config.indexPath, { force: true });
-    const res = await api<{ entities: number; references: number; invalid: unknown[] }>('POST', '/api/index/rebuild');
+    const res = await api<{ entities: number; references: number; invalid: unknown[] }>(
+      'POST',
+      '/api/index/rebuild',
+    );
     expect(res.status).toBe(200);
     expect(res.body.entities).toBe(6);
     expect(res.body.invalid).toEqual([]);
@@ -292,7 +340,10 @@ describe('index', () => {
     writeFileSync(join(config.libraryDir, 'agents', 'broken-aaaaaa.yaml'), 'name: Broken\n');
     git('add', '-A');
     git('commit', '-qm', 'broken');
-    const res = await api<{ entities: number; invalid: { kind: string; id: string }[] }>('POST', '/api/index/rebuild');
+    const res = await api<{ entities: number; invalid: { kind: string; id: string }[] }>(
+      'POST',
+      '/api/index/rebuild',
+    );
     expect(res.body.entities).toBe(6);
     expect(res.body.invalid).toMatchObject([{ kind: 'agent', id: 'broken-aaaaaa' }]);
   });

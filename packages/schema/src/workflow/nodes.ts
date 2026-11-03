@@ -117,7 +117,15 @@ export const DecisionNode = nodeBase.extend({
 
 // ---- Other nodes ----
 
-export const ArtifactFileType = z.enum(['markdown', 'json', 'xml', 'yaml', 'text', 'code', 'other']);
+export const ArtifactFileType = z.enum([
+  'markdown',
+  'json',
+  'xml',
+  'yaml',
+  'text',
+  'code',
+  'other',
+]);
 export type ArtifactFileType = z.infer<typeof ArtifactFileType>;
 
 export const ArtifactNode = nodeBase.extend({

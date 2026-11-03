@@ -76,13 +76,17 @@ export class LibraryGit {
     await this.git.raw(['config', '--local', 'tag.gpgsign', 'false']);
     for (const key of ['name', 'email'] as const) {
       const current = await this.git.raw(['config', '--get', `user.${key}`]).catch(() => '');
-      if (!current.trim()) await this.git.raw(['config', '--local', `user.${key}`, FALLBACK_AUTHOR[key]]);
+      if (!current.trim())
+        await this.git.raw(['config', '--local', `user.${key}`, FALLBACK_AUTHOR[key]]);
     }
   }
 
   async head(ref = MAIN_BRANCH): Promise<string | undefined> {
     try {
-      return (await this.git.raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])).trim() || undefined;
+      return (
+        (await this.git.raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])).trim() ||
+        undefined
+      );
     } catch {
       return undefined;
     }
@@ -119,7 +123,8 @@ export class LibraryGit {
     const staged = await this.git.raw(['diff', '--cached', '--name-only', '--', ...paths]);
     if (!staged.trim()) return null;
     await this.git.raw(['commit', '--quiet', '-m', message, '--', ...paths]);
-    const hash = (await this.head('HEAD'))!;
+    const hash = await this.head('HEAD');
+    if (!hash) throw new Error('git commit did not produce a commit');
     return { hash, message };
   }
 

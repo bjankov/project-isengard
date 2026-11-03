@@ -4,7 +4,10 @@ import { readSkillMd, writeSkillMd } from './layout.js';
 describe('SKILL.md frontmatter', () => {
   it('round-trips frontmatter and body', () => {
     const text = writeSkillMd({ name: 'a', description: 'b: with colon' }, '# Title\n\nbody\n');
-    expect(readSkillMd(text)).toEqual({ frontmatter: { name: 'a', description: 'b: with colon' }, body: '# Title\n\nbody\n' });
+    expect(readSkillMd(text)).toEqual({
+      frontmatter: { name: 'a', description: 'b: with colon' },
+      body: '# Title\n\nbody\n',
+    });
   });
 
   it('round-trips an empty body', () => {
