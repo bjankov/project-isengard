@@ -1,0 +1,9 @@
+PLAN.md
+CLAUDE.md
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+coverage/
+.vite/
