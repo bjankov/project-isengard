@@ -19,7 +19,7 @@ Format: date, milestone, decision, reason.
 - **One commit per create, update or delete.** Messages look like `Create agent planner-k3x9qa (Planner)`. An update that changes nothing makes no commit, and the API returns `commit: null`.
 - **Git operations are serialized** through an in-process queue. If a write fails, the touched paths are rolled back to `HEAD`.
 - **Commit identity:** the user's git identity if configured, otherwise a repo-local fallback `app <app@localhost>`.
-- **Commit and tag signing are disabled in the library repo only** (repo-local `commit.gpgsign=false`, `tag.gpgsign=false`). Reason: the app commits on every save (autosave later), and global signing with a hardware key blocked every write waiting for a touch. The user's global config and their own repos are not touched.
+- **Commit and tag signing are disabled in the library repo only** (repo-local `commit.gpgsign=false`, `tag.gpgsign=false`). Reason: the app commits on every save (autosave later), and global signing with a hardware key blocked every write waiting for a touch. The user's global config and their own repos are not touched. Confirmed by the user on 2026-11-03.
 - On first start the store gets a `README.md`, a `.gitkeep` per kind folder, and an `Initialize library store` commit.
 
 ### File layout details (PLAN.md 5.4)

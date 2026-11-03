@@ -34,4 +34,3 @@ Open issues / questions:
 - The `shadcn add` CLI didn't resolve the `@/lib/utils` alias and installed an unrelated `cn` npm package. I removed it and fixed the imports by hand. Check the imports after each `shadcn add` (M1).
 - Extra `SKILL.md` frontmatter fields (e.g. `license`) are dropped on save. Decide in M1 whether to preserve them.
 - `npx app` distribution (a single command without pnpm) is not built yet. PLAN.md lists it as the target, and `pnpm dev` is the one command for now.
-- `PLAN.md` and `CLAUDE.md` are in `.gitignore`, so they are not committed. Is that intended?
