@@ -17,7 +17,8 @@ export interface CommitInfo {
 
 export interface EntityMutationResponse<K extends EntityKind> {
   entity: EntityByKind[K];
-  commit: CommitInfo;
+  /** Null when an update changed nothing (no commit was made). */
+  commit: CommitInfo | null;
 }
 
 export interface DeleteResponse {
@@ -47,6 +48,8 @@ export interface RebuildResponse {
   entities: number;
   references: number;
   head: string;
+  /** Entities whose files exist but do not validate; left out of the index. */
+  invalid: { kind: EntityKind; id: string; message: string }[];
 }
 
 export interface ApiErrorBody {
