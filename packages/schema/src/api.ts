@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import type { ENTITY_SCHEMAS, EntityByKind, EntitySummary } from './entities.js';
+import type { ENTITY_SCHEMAS, EntityByKind, EntitySummary, Settings } from './entities.js';
 import type { EntityKind, Ref } from './ids.js';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
@@ -27,6 +27,29 @@ export interface DeleteResponse {
 
 export interface ListResponse {
   items: EntitySummary[];
+}
+
+/** `GET /api/<kind>?full=1`: complete entities instead of summaries. */
+export interface FullListResponse<K extends EntityKind> {
+  items: EntityByKind[K][];
+}
+
+export interface SettingsResponse {
+  settings: Settings;
+  /** Where the library store lives on disk (read-only in the UI). */
+  libraryDir: string;
+}
+
+export interface SettingsMutationResponse {
+  settings: Settings;
+  commit: CommitInfo | null;
+}
+
+export interface ReferencedErrorBody {
+  error: 'conflict';
+  message: string;
+  /** Entities that still reference the one being deleted. */
+  references: (EntitySummary & { version: string })[];
 }
 
 export interface ReferencesResponse {

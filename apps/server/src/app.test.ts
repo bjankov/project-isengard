@@ -75,7 +75,7 @@ describe('startup', () => {
   it('initializes the library store as a git repo with one commit per kind folder', async () => {
     await start();
     expect(git('rev-parse', '--abbrev-ref', 'HEAD').trim()).toBe('main');
-    expect(git('log', '--format=%s').trim()).toBe('Initialize library store');
+    expect(git('log', '--format=%s').trim()).toBe('Add default settings\nInitialize library store');
     for (const dir of ['skills', 'tools', 'agents', 'patterns', 'templates', 'projects']) {
       expect(existsSync(join(config.libraryDir, dir, '.gitkeep'))).toBe(true);
     }
@@ -88,7 +88,7 @@ describe('startup', () => {
     await start();
     await stop();
     await start();
-    expect(git('rev-list', '--count', 'HEAD').trim()).toBe('1');
+    expect(git('rev-list', '--count', 'HEAD').trim()).toBe('2');
   });
 
   it('reports a clear error when git is missing', async () => {
@@ -173,8 +173,8 @@ describe.each(ENTITY_KINDS)('CRUD for %s', (kind) => {
     expect((await api('GET', `/api/${plural}/${id}`)).status).toBe(404);
     expect((await listAll())[kind]).toEqual([]);
     expect(git('status', '--porcelain').trim()).toBe('');
-    // init + create + update + delete
-    expect(git('rev-list', '--count', 'HEAD').trim()).toBe('4');
+    // init + settings + create + update + delete
+    expect(git('rev-list', '--count', 'HEAD').trim()).toBe('5');
   });
 });
 
@@ -188,7 +188,7 @@ describe('API errors', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('validation');
     expect(res.body.issues.map((i) => i.path.join('.'))).toContain('defaults.effort');
-    expect(git('rev-list', '--count', 'HEAD').trim()).toBe('1');
+    expect(git('rev-list', '--count', 'HEAD').trim()).toBe('2');
     expect(git('status', '--porcelain').trim()).toBe('');
   });
 
@@ -222,7 +222,7 @@ describe('API errors', () => {
       ),
     );
     expect(results.every((r) => r.status === 201)).toBe(true);
-    expect(git('rev-list', '--count', 'HEAD').trim()).toBe('9');
+    expect(git('rev-list', '--count', 'HEAD').trim()).toBe('10');
     expect((await listAll()).tool).toHaveLength(8);
   });
 });
@@ -346,5 +346,103 @@ describe('index', () => {
     );
     expect(res.body.entities).toBe(6);
     expect(res.body.invalid).toMatchObject([{ kind: 'agent', id: 'broken-aaaaaa' }]);
+  });
+});
+
+describe('settings', () => {
+  it('seeds default settings in a new library', async () => {
+    await start();
+    const res = await api<{ settings: { models: { model: string }[] }; libraryDir: string }>(
+      'GET',
+      '/api/settings',
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.libraryDir).toBe(config.libraryDir);
+    expect(res.body.settings.models.map((m) => m.model)).toContain('claude-sonnet-5-5');
+    expect(existsSync(join(config.libraryDir, 'settings.yaml'))).toBe(true);
+  });
+
+  it('adds default settings to an existing library that has none', async () => {
+    await start();
+    await stop();
+    git('rm', '-q', 'settings.yaml');
+    git('commit', '-qm', 'remove settings');
+    await start();
+    expect((await api('GET', '/api/settings')).status).toBe(200);
+    expect(git('log', '-1', '--format=%s').trim()).toBe('Add default settings');
+  });
+
+  it('updates settings as a commit and validates them', async () => {
+    await start();
+    const { body } = await api<{ settings: Record<string, unknown> }>('GET', '/api/settings');
+    const next = {
+      ...body.settings,
+      models: [{ provider: 'local', model: 'llama-4', label: 'Llama 4' }],
+    };
+    const res = await api<{ commit: { message: string } }>('PUT', '/api/settings', next);
+    expect(res.status).toBe(200);
+    expect(res.body.commit.message).toBe('Update settings');
+    expect(readFileSync(join(config.libraryDir, 'settings.yaml'), 'utf8')).toContain('llama-4');
+    const again = await api<{ commit: unknown }>('PUT', '/api/settings', next);
+    expect(again.body.commit).toBeNull();
+
+    const bad = await api<{ error: string }>('PUT', '/api/settings', { ...next, models: 'nope' });
+    expect(bad.status).toBe(400);
+    expect(git('status', '--porcelain').trim()).toBe('');
+  });
+
+  it('does not trigger an index rebuild on restart after a settings change', async () => {
+    await start();
+    const { body } = await api<{ settings: Record<string, unknown> }>('GET', '/api/settings');
+    await api('PUT', '/api/settings', { ...body.settings, models: [] });
+    const head = git('rev-parse', 'HEAD').trim();
+    await stop();
+    await start();
+    const health = await api<{ libraryHead: string }>('GET', '/api/health');
+    expect(health.body.libraryHead).toBe(head);
+  });
+});
+
+describe('full lists', () => {
+  it('returns complete entities with ?full=1', async () => {
+    await start();
+    await api('POST', '/api/tools', sampleReadTool);
+    const res = await api<{ items: { builtin: string; scope: unknown }[] }>(
+      'GET',
+      '/api/tools?full=1',
+    );
+    expect(res.body.items).toHaveLength(1);
+    expect(res.body.items[0]).toMatchObject({ builtin: 'read_file', scope: { paths: ['src/**'] } });
+  });
+});
+
+describe('deleting referenced entities', () => {
+  it('is blocked with the list of users until the reference is removed', async () => {
+    await start();
+    const skill = await api<{ entity: { id: string } }>('POST', '/api/skills', sampleSkill);
+    const skillRef = { kind: 'skill', id: skill.body.entity.id, version: 'v1' };
+    const agent = await api<{ entity: { id: string } }>('POST', '/api/agents', {
+      ...sampleAgent,
+      skills: [skillRef],
+      tools: [],
+    });
+
+    const blocked = await api<{
+      error: string;
+      references: { kind: string; id: string; name: string }[];
+    }>('DELETE', `/api/skills/${skill.body.entity.id}`);
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.error).toBe('conflict');
+    expect(blocked.body.references).toMatchObject([
+      { kind: 'agent', id: agent.body.entity.id, name: 'Planner', version: 'v1' },
+    ]);
+    expect(existsSync(join(config.libraryDir, 'skills', skill.body.entity.id))).toBe(true);
+
+    await api('PUT', `/api/agents/${agent.body.entity.id}`, {
+      ...sampleAgent,
+      skills: [],
+      tools: [],
+    });
+    expect((await api('DELETE', `/api/skills/${skill.body.entity.id}`)).status).toBe(200);
   });
 });

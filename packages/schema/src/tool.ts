@@ -120,3 +120,60 @@ export type ToolPreset = z.infer<typeof ToolPreset>;
 export function isUnrestrictedShell(preset: ToolPreset): boolean {
   return preset.builtin === 'shell' && preset.scope.commands.length === 0;
 }
+
+export function builtinTool(id: BuiltinToolId): BuiltinTool {
+  const tool = BUILTIN_TOOLS.find((t) => t.id === id);
+  if (!tool) throw new Error(`unknown built-in tool "${id}"`);
+  return tool;
+}
+
+const PATH_VERBS: Record<'read_file' | 'write_file' | 'edit_file' | 'search_files', string> = {
+  read_file: 'read',
+  write_file: 'write',
+  edit_file: 'edit',
+  search_files: 'search',
+};
+
+function formatShellRule(rule: ShellCommandRule): string {
+  return rule.match === 'exact' ? rule.command : `${rule.command} …`;
+}
+
+export interface ScopeDescription {
+  /** One line in plain words, e.g. "read src/**, docs/**". */
+  summary: string;
+  /** Individual items (globs, commands, domains) for chip-style display. */
+  items: string[];
+  unrestricted: boolean;
+}
+
+/** Plain-language description of what a preset allows. */
+export function describeScope(preset: ToolPreset): ScopeDescription {
+  switch (preset.builtin) {
+    case 'read_file':
+    case 'write_file':
+    case 'edit_file':
+    case 'search_files': {
+      const items = preset.scope.paths;
+      return {
+        summary: `${PATH_VERBS[preset.builtin]} ${items.join(', ')}`,
+        items,
+        unrestricted: false,
+      };
+    }
+    case 'shell': {
+      const items = preset.scope.commands.map(formatShellRule);
+      return items.length === 0
+        ? { summary: 'shell: any command (unrestricted)', items, unrestricted: true }
+        : { summary: `shell: ${items.join(', ')}`, items, unrestricted: false };
+    }
+    case 'web_search':
+    case 'web_fetch': {
+      const { allow, deny } = preset.scope;
+      const verb = preset.builtin === 'web_search' ? 'search' : 'fetch';
+      let summary = `${verb} any domain`;
+      if (allow.length > 0) summary = `${verb} only ${allow.join(', ')}`;
+      if (deny.length > 0) summary += ` except ${deny.join(', ')}`;
+      return { summary, items: [...allow, ...deny.map((d) => `not ${d}`)], unrestricted: false };
+    }
+  }
+}

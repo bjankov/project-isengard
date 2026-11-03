@@ -4,16 +4,19 @@ import type { EntityKind, EntitySummary, Ref } from '@app/schema';
 import Database from 'better-sqlite3';
 
 /** Bump when the table layout changes; a mismatch drops and rebuilds the index. */
-const INDEX_SCHEMA_VERSION = '1';
+const INDEX_SCHEMA_VERSION = '2';
 
 export interface IndexEntry {
   summary: EntitySummary;
   refs: Ref[];
+  /** The full, validated entity (cached so lists can return complete entities quickly). */
+  data: unknown;
 }
 
 export interface IncomingRef {
   kind: EntityKind;
   id: string;
+  /** The version the referencing entity pins. */
   version: string;
 }
 
@@ -42,6 +45,7 @@ export class LibraryIndex {
         id TEXT NOT NULL,
         name TEXT NOT NULL,
         description TEXT NOT NULL,
+        data TEXT NOT NULL,
         PRIMARY KEY (kind, id)
       );
       CREATE TABLE IF NOT EXISTS refs (
@@ -81,11 +85,11 @@ export class LibraryIndex {
     else this.db.prepare("DELETE FROM meta WHERE key = 'head'").run();
   }
 
-  private writeEntry({ summary, refs }: IndexEntry): void {
+  private writeEntry({ summary, refs, data }: IndexEntry): void {
     this.removeEntry(summary.kind, summary.id);
     this.db
-      .prepare('INSERT INTO entities (kind, id, name, description) VALUES (?, ?, ?, ?)')
-      .run(summary.kind, summary.id, summary.name, summary.description);
+      .prepare('INSERT INTO entities (kind, id, name, description, data) VALUES (?, ?, ?, ?, ?)')
+      .run(summary.kind, summary.id, summary.name, summary.description, JSON.stringify(data));
     const insertRef = this.db.prepare(
       'INSERT OR IGNORE INTO refs (from_kind, from_id, to_kind, to_id, to_version) VALUES (?, ?, ?, ?, ?)',
     );
@@ -136,6 +140,20 @@ export class LibraryIndex {
           )
           .all(kind);
     return rows as EntitySummary[];
+  }
+
+  /** Complete entities of a kind, as last written. Callers validate if they need to. */
+  listFull(kind: EntityKind): unknown[] {
+    const rows = this.db
+      .prepare('SELECT data FROM entities WHERE kind = ? ORDER BY name COLLATE NOCASE, id')
+      .all(kind) as { data: string }[];
+    return rows.map((r) => JSON.parse(r.data) as unknown);
+  }
+
+  summary(kind: EntityKind, id: string): EntitySummary | undefined {
+    return this.db
+      .prepare('SELECT kind, id, name, description FROM entities WHERE kind = ? AND id = ?')
+      .get(kind, id) as EntitySummary | undefined;
   }
 
   outgoing(kind: EntityKind, id: string): Ref[] {

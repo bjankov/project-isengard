@@ -3,13 +3,20 @@ import {
   type ApiErrorBody,
   type EntityKind,
   type HealthResponse,
-  type ListResponse,
   type RebuildResponse,
+  type ReferencedErrorBody,
+  type SettingsMutationResponse,
+  type SettingsResponse,
 } from '@app/schema';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import type { AppConfig } from './config.js';
 import { checkGitInstalled } from './git.js';
-import { EntityValidationError, LibraryStore, NotFoundError } from './store/library-store.js';
+import {
+  EntityValidationError,
+  LibraryStore,
+  NotFoundError,
+  ReferencedError,
+} from './store/library-store.js';
 
 export interface BuiltApp {
   app: FastifyInstance;
@@ -40,8 +47,11 @@ export async function buildApp(
 
   app.setErrorHandler<Error & { statusCode?: number }>((err, _req, reply) => {
     let status = 500;
-    let body: ApiErrorBody;
-    if (err instanceof NotFoundError || err instanceof UnknownKindError) {
+    let body: ApiErrorBody | ReferencedErrorBody;
+    if (err instanceof ReferencedError) {
+      status = 409;
+      body = { error: 'conflict', message: err.message, references: err.references };
+    } else if (err instanceof NotFoundError || err instanceof UnknownKindError) {
       status = 404;
       body = { error: 'not_found', message: err.message };
     } else if (err instanceof EntityValidationError) {
@@ -74,11 +84,24 @@ export async function buildApp(
 
   app.post('/api/index/rebuild', async (): Promise<RebuildResponse> => store.rebuildIndex());
 
-  app.get<{ Params: { kinds: string }; Querystring: { q?: string } }>(
+  app.get('/api/settings', async (): Promise<SettingsResponse> => ({
+    settings: await store.getSettings(),
+    libraryDir: config.libraryDir,
+  }));
+
+  app.put<{ Body: unknown }>('/api/settings', async (req): Promise<SettingsMutationResponse> =>
+    store.updateSettings(req.body),
+  );
+
+  app.get<{ Params: { kinds: string }; Querystring: { q?: string; full?: string } }>(
     '/api/:kinds',
-    async (req): Promise<ListResponse> => ({
-      items: store.list(kindParam(req.params.kinds), req.query.q),
-    }),
+    async (req) => {
+      const kind = kindParam(req.params.kinds);
+      if (req.query.full === '1' || req.query.full === 'true') {
+        return { items: store.listFull(kind) };
+      }
+      return { items: store.list(kind, req.query.q) };
+    },
   );
 
   app.post<{ Params: { kinds: string }; Body: unknown }>('/api/:kinds', async (req, reply) => {
