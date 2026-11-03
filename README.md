@@ -18,7 +18,8 @@ Set `APP_HOME=/some/dir` to use another folder, `APP_NO_OPEN=1` to not open the 
 
 ## Check
 ```sh
-pnpm check        # typecheck + lint + tests
+pnpm check        # typecheck + lint + unit/API tests
+pnpm test:e2e     # browser tests (Playwright, uses your installed Google Chrome)
 ```
 
 ## Layout
