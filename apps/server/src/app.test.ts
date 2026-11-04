@@ -6,8 +6,12 @@ import {
   ENTITY_KINDS,
   KIND_PLURALS,
   type EntityKind,
+  type EntityListItem,
   type EntitySummary,
+  type DiffResponse,
+  type HistoryResponse,
   type ReferencesResponse,
+  type VersionStatus,
 } from '@app/schema';
 import {
   SAMPLE_INPUTS,
@@ -52,11 +56,11 @@ async function api<T = unknown>(
   return { status: res.statusCode, body: (res.body ? res.json() : undefined) as T };
 }
 
-function listAll(): Promise<Record<EntityKind, EntitySummary[]>> {
+function listAll(): Promise<Record<EntityKind, EntityListItem[]>> {
   return Promise.all(
     ENTITY_KINDS.map(async (k) => [
       k,
-      (await api<{ items: EntitySummary[] }>('GET', `/api/${KIND_PLURALS[k]}`)).body.items,
+      (await api<{ items: EntityListItem[] }>('GET', `/api/${KIND_PLURALS[k]}`)).body.items,
     ]),
   ).then(Object.fromEntries);
 }
@@ -144,26 +148,69 @@ describe.each(ENTITY_KINDS)('CRUD for %s', (kind) => {
     expect(read.body).toEqual(created.body.entity);
     expect((await listAll())[kind].map((s) => s.id)).toEqual([id]);
 
-    // update
+    // update: saved on the draft branch, main is unchanged
+    const draftRef = `refs/heads/${kind}/${id}/draft`;
+    const mainBefore = git('rev-parse', 'main').trim();
     const renamed = kind === 'skill' ? 'renamed-skill' : 'Renamed';
     const updated = await api<{
       entity: { id: string; name: string };
-      commit: { message: string };
+      commit: { message: string; hash: string };
+      status: VersionStatus;
     }>('PUT', `/api/${plural}/${id}`, { ...input, name: renamed });
     expect(updated.status).toBe(200);
     expect(updated.body.entity).toMatchObject({ id, name: renamed });
     expect(updated.body.commit.message).toBe(`Update ${kind} ${id} (${renamed})`);
-    expect((await api<{ name: string }>('GET', `/api/${plural}/${id}`)).body.name).toBe(renamed);
-    expect((await listAll())[kind][0]!.name).toBe(renamed);
+    expect(updated.body.status).toMatchObject({
+      current: 'v1',
+      versions: ['v1'],
+      branches: [{ name: 'draft', commits: 1, changed: true, head: updated.body.commit.hash }],
+    });
+    expect(git('rev-parse', 'main').trim()).toBe(mainBefore);
+    expect(git('rev-parse', draftRef).trim()).toBe(updated.body.commit.hash);
+    expect(git('status', '--porcelain').trim()).toBe('');
+    const original = created.body.entity.name;
+    expect((await api<{ name: string }>('GET', `/api/${plural}/${id}`)).body.name).toBe(original);
+    expect((await api<{ name: string }>('GET', `/api/${plural}/${id}?ref=draft`)).body.name).toBe(
+      renamed,
+    );
+    expect((await listAll())[kind][0]).toMatchObject({
+      name: original,
+      version: 'v1',
+      hasDraft: true,
+    });
 
     // no-op update makes no commit
-    const head = git('rev-parse', 'HEAD').trim();
     const noop = await api<{ commit: unknown }>('PUT', `/api/${plural}/${id}`, {
       ...input,
       name: renamed,
     });
     expect(noop.body.commit).toBeNull();
-    expect(git('rev-parse', 'HEAD').trim()).toBe(head);
+    expect(git('rev-parse', draftRef).trim()).toBe(updated.body.commit.hash);
+
+    // merge: main gets the draft as v2, the draft is gone
+    const merged = await api<{
+      entity: { name: string };
+      commit: { message: string };
+      version: string;
+      status: VersionStatus;
+    }>('POST', `/api/${plural}/${id}/merge`);
+    expect(merged.status).toBe(200);
+    expect(merged.body.version).toBe('v2');
+    expect(merged.body.entity.name).toBe(renamed);
+    expect(merged.body.commit.message).toBe(`Merge ${kind} ${id} (${renamed}) as v2`);
+    expect(merged.body.status).toEqual({ current: 'v2', versions: ['v2', 'v1'], branches: [] });
+    expect(git('rev-parse', `${kind}/${id}/v2`).trim()).toBe(git('rev-parse', 'main').trim());
+    expect(git('branch', '--list', `${kind}/${id}/*`).trim()).toBe('');
+    expect(git('status', '--porcelain').trim()).toBe('');
+    expect((await api<{ name: string }>('GET', `/api/${plural}/${id}`)).body.name).toBe(renamed);
+    expect((await api<{ name: string }>('GET', `/api/${plural}/${id}?ref=v1`)).body.name).toBe(
+      original,
+    );
+    expect((await listAll())[kind][0]).toMatchObject({
+      name: renamed,
+      version: 'v2',
+      hasDraft: false,
+    });
 
     // delete
     const deleted = await api<{ commit: { message: string } }>('DELETE', `/api/${plural}/${id}`);
@@ -173,8 +220,13 @@ describe.each(ENTITY_KINDS)('CRUD for %s', (kind) => {
     expect((await api('GET', `/api/${plural}/${id}`)).status).toBe(404);
     expect((await listAll())[kind]).toEqual([]);
     expect(git('status', '--porcelain').trim()).toBe('');
-    // init + settings + create + update + delete
-    expect(git('rev-list', '--count', 'HEAD').trim()).toBe('5');
+    // init + settings + create + draft update + merge + delete
+    expect(git('rev-list', '--count', 'HEAD').trim()).toBe('6');
+    // version tags stay in history
+    expect(git('tag', '--list', `${kind}/${id}/*`).trim().split('\n')).toEqual([
+      `${kind}/${id}/v1`,
+      `${kind}/${id}/v2`,
+    ]);
   });
 });
 
@@ -261,7 +313,7 @@ describe('files', () => {
     });
     const { id: _id, ...input } = skill;
     await api('PUT', `/api/skills/${id}`, { ...input, description: 'PDF tools' });
-    expect(readFileSync(join(config.libraryDir, 'skills', id, 'SKILL.md'), 'utf8')).toBe(
+    expect(git('show', `refs/heads/skill/${id}/draft:skills/${id}/SKILL.md`)).toBe(
       '---\nname: pdf-tools\ndescription: PDF tools\nlicense: MIT\nmetadata:\n  version: "2"\nx-team: docs\n---\n\nBody\n',
     );
   });
@@ -271,7 +323,8 @@ describe('files', () => {
     const { body } = await api<{ entity: { id: string } }>('POST', '/api/projects', sampleProject);
     const moved = { ...sampleProject, layout: { nodes: { in: { x: 500, y: 500 } } } };
     await api('PUT', `/api/projects/${body.entity.id}`, moved);
-    expect(git('show', '--name-only', '--format=', 'HEAD').trim()).toBe(
+    const draft = `refs/heads/project/${body.entity.id}/draft`;
+    expect(git('show', '--name-only', '--format=', draft).trim()).toBe(
       `projects/${body.entity.id}/layout.json`,
     );
   });
@@ -468,6 +521,226 @@ describe('deleting referenced entities', () => {
       skills: [],
       tools: [],
     });
+    // Still blocked: the reference is only gone on the agent's draft, not on main.
+    expect((await api('DELETE', `/api/skills/${skill.body.entity.id}`)).status).toBe(409);
+    await api('POST', `/api/agents/${agent.body.entity.id}/merge`);
     expect((await api('DELETE', `/api/skills/${skill.body.entity.id}`)).status).toBe(200);
+  });
+});
+
+describe('versioning', () => {
+  type Created = { entity: { id: string; name: string } };
+
+  async function createAgent(name = 'Planner') {
+    const res = await api<Created>('POST', '/api/agents', {
+      ...sampleAgent,
+      name,
+      skills: [],
+      tools: [],
+    });
+    return res.body.entity.id;
+  }
+
+  const edit = (id: string, changes: Record<string, unknown>) =>
+    api<{ commit: { hash: string } | null; status: VersionStatus }>('PUT', `/api/agents/${id}`, {
+      ...sampleAgent,
+      skills: [],
+      tools: [],
+      ...changes,
+    });
+
+  it('tags v1 on create and reports the version status', async () => {
+    await start();
+    const id = await createAgent();
+    expect(git('rev-parse', `agent/${id}/v1`).trim()).toBe(git('rev-parse', 'main').trim());
+    const status = await api<VersionStatus>('GET', `/api/agents/${id}/versions`);
+    expect(status.body).toEqual({ current: 'v1', versions: ['v1'], branches: [] });
+    expect((await api('GET', '/api/agents/nope-aaaaaa/versions')).status).toBe(404);
+  });
+
+  it('tags existing untagged entities as v1 on startup', async () => {
+    await start();
+    const id = await createAgent();
+    await stop();
+    git('tag', '-d', `agent/${id}/v1`);
+    git('commit', '-q', '--allow-empty', '-m', 'unrelated');
+    await start();
+    expect(git('rev-parse', `agent/${id}/v1`).trim()).toBe(git('rev-parse', 'main').trim());
+    expect((await listAll()).agent[0]).toMatchObject({ id, version: 'v1', hasDraft: false });
+  });
+
+  it('never switches the working tree: files on disk always show main', async () => {
+    await start();
+    const id = await createAgent();
+    const file = join(config.libraryDir, 'agents', `${id}.yaml`);
+    const onMain = readFileSync(file, 'utf8');
+    await edit(id, { name: 'Draft name' });
+    expect(git('rev-parse', '--abbrev-ref', 'HEAD').trim()).toBe('main');
+    expect(readFileSync(file, 'utf8')).toBe(onMain);
+    expect(git('status', '--porcelain').trim()).toBe('');
+    await api('POST', `/api/agents/${id}/merge`);
+    expect(readFileSync(file, 'utf8')).toContain('Draft name');
+    expect(git('status', '--porcelain').trim()).toBe('');
+  });
+
+  it('merges only the entity being merged', async () => {
+    await start();
+    const a = await createAgent('Alpha');
+    const b = await createAgent('Beta');
+    await edit(a, { name: 'Alpha 2' });
+    await edit(b, { name: 'Beta 2' });
+    const mergeA = await api<{ version: string }>('POST', `/api/agents/${a}/merge`);
+    expect(mergeA.body.version).toBe('v2');
+    expect((await api<{ name: string }>('GET', `/api/agents/${b}`)).body.name).toBe('Beta');
+    expect(
+      (await api<VersionStatus>('GET', `/api/agents/${b}/versions`)).body.branches,
+    ).toMatchObject([{ name: 'draft', changed: true }]);
+    // B's draft started before A was merged; that is not a conflict for B.
+    const mergeB = await api<{ version: string }>('POST', `/api/agents/${b}/merge`);
+    expect(mergeB.status).toBe(200);
+    expect(mergeB.body.version).toBe('v2');
+    expect((await listAll()).agent.map((x) => [x.name, x.version])).toEqual([
+      ['Alpha 2', 'v2'],
+      ['Beta 2', 'v2'],
+    ]);
+  });
+
+  it('starts a new draft after a merge and keeps counting versions', async () => {
+    await start();
+    const id = await createAgent();
+    await edit(id, { name: 'Two' });
+    await api('POST', `/api/agents/${id}/merge`);
+    const again = await edit(id, { name: 'Three' });
+    expect(again.body.status.branches).toMatchObject([{ name: 'draft', commits: 1 }]);
+    const merged = await api<{ version: string }>('POST', `/api/agents/${id}/merge`);
+    expect(merged.body.version).toBe('v3');
+  });
+
+  it('does not create a draft for a save that changes nothing', async () => {
+    await start();
+    const id = await createAgent();
+    const res = await edit(id, {});
+    expect(res.body.commit).toBeNull();
+    expect(res.body.status.branches).toEqual([]);
+    expect(git('branch', '--list', `agent/${id}/*`).trim()).toBe('');
+  });
+
+  it('refuses to merge a draft that matches main', async () => {
+    await start();
+    const id = await createAgent();
+    await edit(id, { name: 'Changed' });
+    const back = await edit(id, {});
+    expect(back.body.status.branches).toMatchObject([{ commits: 2, changed: false }]);
+    const res = await api<{ error: string }>('POST', `/api/agents/${id}/merge`);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('bad_request');
+  });
+
+  it('404s when merging without a draft', async () => {
+    await start();
+    const id = await createAgent();
+    expect((await api('POST', `/api/agents/${id}/merge`)).status).toBe(404);
+  });
+
+  it('detects that main changed since the draft started, and merges with force', async () => {
+    await start();
+    const id = await createAgent();
+    await edit(id, { name: 'From draft' });
+    // Someone changes main's copy outside the app.
+    const file = join(config.libraryDir, 'agents', `${id}.yaml`);
+    writeFileSync(file, readFileSync(file, 'utf8').replace('Planner', 'From main'));
+    git('commit', '-qam', 'manual edit');
+
+    const res = await api<{ error: string }>('POST', `/api/agents/${id}/merge`);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('merge_conflict');
+    expect((await api<{ name: string }>('GET', `/api/agents/${id}`)).body.name).toBe('From main');
+
+    const forced = await api<{ version: string; entity: { name: string } }>(
+      'POST',
+      `/api/agents/${id}/merge`,
+      { force: true },
+    );
+    expect(forced.status).toBe(200);
+    expect(forced.body.entity.name).toBe('From draft');
+    expect((await api<{ name: string }>('GET', `/api/agents/${id}`)).body.name).toBe('From draft');
+  });
+
+  it('discards a draft', async () => {
+    await start();
+    const id = await createAgent();
+    await edit(id, { name: 'Throwaway' });
+    const res = await api<{ status: VersionStatus }>('DELETE', `/api/agents/${id}/branches/draft`);
+    expect(res.status).toBe(200);
+    expect(res.body.status.branches).toEqual([]);
+    expect((await api('GET', `/api/agents/${id}?ref=draft`)).status).toBe(404);
+    expect((await api<{ name: string }>('GET', `/api/agents/${id}`)).body.name).toBe('Planner');
+    expect((await api('DELETE', `/api/agents/${id}/branches/draft`)).status).toBe(404);
+  });
+
+  it('deletes the draft branch together with the entity', async () => {
+    await start();
+    const id = await createAgent();
+    await edit(id, { name: 'Draft' });
+    expect((await api('DELETE', `/api/agents/${id}`)).status).toBe(200);
+    expect(git('branch', '--list', `agent/${id}/*`).trim()).toBe('');
+    expect(git('tag', '--list', `agent/${id}/*`).trim()).toBe(`agent/${id}/v1`);
+  });
+
+  it('shows history and diffs between versions, branches and commits', async () => {
+    await start();
+    const id = await createAgent();
+    const first = await edit(id, { name: 'Second' });
+    await edit(id, { name: 'Second', prompt: 'Plan carefully.' });
+    await api('POST', `/api/agents/${id}/merge`);
+    const pending = await edit(id, { name: 'Third', prompt: 'Plan carefully.' });
+
+    const history = await api<HistoryResponse>('GET', `/api/agents/${id}/history`);
+    expect(history.status).toBe(200);
+    expect(history.body.versions.map((v) => [v.version, v.message])).toEqual([
+      ['v2', `Merge agent ${id} (Second) as v2`],
+      ['v1', `Create agent ${id} (Planner)`],
+    ]);
+    expect(history.body.branches).toHaveLength(1);
+    expect(history.body.branches[0]).toMatchObject({ name: 'draft', commits: 1, changed: true });
+    expect(history.body.branches[0]!.log.map((c) => [c.hash, c.message])).toEqual([
+      [pending.body.commit!.hash, `Update agent ${id} (Third)`],
+    ]);
+
+    const path = `agents/${id}.yaml`;
+    const v1v2 = await api<DiffResponse>('GET', `/api/agents/${id}/diff?from=v1&to=v2`);
+    expect(v1v2.body.files.map((f) => f.path)).toEqual([path]);
+    expect(v1v2.body.files[0]!.before).toContain('name: Planner');
+    expect(v1v2.body.files[0]!.after).toContain('name: Second');
+
+    const toDraft = await api<DiffResponse>('GET', `/api/agents/${id}/diff?from=main&to=draft`);
+    expect(toDraft.body.files[0]!.after).toContain('name: Third');
+
+    // A commit that was merged earlier is still reachable by hash.
+    const byHash = await api<DiffResponse>(
+      'GET',
+      `/api/agents/${id}/diff?from=v1&to=${first.body.commit!.hash.slice(0, 10)}`,
+    );
+    expect(byHash.body.files[0]!.after).toContain('name: Second');
+    expect(byHash.body.files[0]!.after).not.toContain('Plan carefully.');
+
+    const same = await api<DiffResponse>('GET', `/api/agents/${id}/diff?from=v2&to=main`);
+    expect(same.body.files).toEqual([]);
+
+    expect((await api('GET', `/api/agents/${id}/diff?from=v1`)).status).toBe(400);
+    expect((await api('GET', `/api/agents/${id}/diff?from=v1&to=v9`)).status).toBe(404);
+    expect((await api('GET', `/api/agents/${id}?ref=v9`)).status).toBe(404);
+    expect((await api('GET', `/api/agents/${id}?ref=nope`)).status).toBe(404);
+  });
+
+  it('includes versions in full lists', async () => {
+    await start();
+    const id = await createAgent();
+    await edit(id, { name: 'Draft' });
+    const res = await api<{ items: unknown[]; versions: Record<string, unknown> }>(
+      'GET',
+      '/api/agents?full=1',
+    );
+    expect(res.body.versions).toEqual({ [id]: { version: 'v1', hasDraft: true } });
   });
 });

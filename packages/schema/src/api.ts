@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 import type { ENTITY_SCHEMAS, EntityByKind, EntitySummary, Settings } from './entities.js';
 import type { EntityKind, Ref } from './ids.js';
+import type { EntityVersionSummary, VersionStatus } from './versioning.js';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -15,23 +16,46 @@ export interface CommitInfo {
   message: string;
 }
 
+/**
+ * `POST /api/<kind>` (creates `v1` on main) and `PUT /api/<kind>/<id>` (commits to the draft
+ * branch). `entity` is what was saved.
+ */
 export interface EntityMutationResponse<K extends EntityKind> {
   entity: EntityByKind[K];
   /** Null when an update changed nothing (no commit was made). */
   commit: CommitInfo | null;
+  status: VersionStatus;
+}
+
+/** `POST /api/<kind>/<id>/merge`. `entity` is the new main version. */
+export interface MergeResponse<K extends EntityKind> {
+  entity: EntityByKind[K];
+  commit: CommitInfo;
+  /** The version the merge created, e.g. `v2`. */
+  version: string;
+  status: VersionStatus;
+}
+
+/** `DELETE /api/<kind>/<id>/branches/<branch>`. */
+export interface DiscardBranchResponse {
+  status: VersionStatus;
 }
 
 export interface DeleteResponse {
   commit: CommitInfo;
 }
 
+export type EntityListItem = EntitySummary & EntityVersionSummary;
+
 export interface ListResponse {
-  items: EntitySummary[];
+  items: EntityListItem[];
 }
 
-/** `GET /api/<kind>?full=1`: complete entities instead of summaries. */
+/** `GET /api/<kind>?full=1`: complete entities (as on main) instead of summaries. */
 export interface FullListResponse<K extends EntityKind> {
   items: EntityByKind[K][];
+  /** Version state per entity id. */
+  versions: Record<string, EntityVersionSummary>;
 }
 
 export interface SettingsResponse {
@@ -76,7 +100,11 @@ export interface RebuildResponse {
 }
 
 export interface ApiErrorBody {
-  error: 'not_found' | 'validation' | 'conflict' | 'internal';
+  /**
+   * `merge_conflict` (409): main changed since the branch started; retry with `force` to
+   * overwrite. `bad_request` (400): e.g. merging a branch with no changes.
+   */
+  error: 'not_found' | 'validation' | 'bad_request' | 'conflict' | 'merge_conflict' | 'internal';
   message: string;
   issues?: { path: (string | number)[]; message: string }[];
 }

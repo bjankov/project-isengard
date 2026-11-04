@@ -1,6 +1,11 @@
 import {
   kindFromPlural,
   type ApiErrorBody,
+  type DiffResponse,
+  type DiscardBranchResponse,
+  type HistoryResponse,
+  type MergeRequest,
+  type VersionStatus,
   type EntityKind,
   type HealthResponse,
   type RebuildResponse,
@@ -12,8 +17,10 @@ import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastif
 import type { AppConfig } from './config.js';
 import { checkGitInstalled } from './git.js';
 import {
+  BadRequestError,
   EntityValidationError,
   LibraryStore,
+  MergeConflictError,
   NotFoundError,
   ReferencedError,
 } from './store/library-store.js';
@@ -51,6 +58,12 @@ export async function buildApp(
     if (err instanceof ReferencedError) {
       status = 409;
       body = { error: 'conflict', message: err.message, references: err.references };
+    } else if (err instanceof MergeConflictError) {
+      status = 409;
+      body = { error: 'merge_conflict', message: err.message };
+    } else if (err instanceof BadRequestError) {
+      status = 400;
+      body = { error: 'bad_request', message: err.message };
     } else if (err instanceof NotFoundError || err instanceof UnknownKindError) {
       status = 404;
       body = { error: 'not_found', message: err.message };
@@ -97,10 +110,8 @@ export async function buildApp(
     '/api/:kinds',
     async (req) => {
       const kind = kindParam(req.params.kinds);
-      if (req.query.full === '1' || req.query.full === 'true') {
-        return { items: store.listFull(kind) };
-      }
-      return { items: store.list(kind, req.query.q) };
+      if (req.query.full === '1' || req.query.full === 'true') return store.listFull(kind);
+      return { items: await store.list(kind, req.query.q) };
     },
   );
 
@@ -109,8 +120,10 @@ export async function buildApp(
     return reply.status(201).send(result);
   });
 
-  app.get<{ Params: { kinds: string; id: string } }>('/api/:kinds/:id', async (req) =>
-    store.get(kindParam(req.params.kinds), req.params.id),
+  /** `?ref=` main (default), a version (`v2`), a branch (`draft`) or a commit hash. */
+  app.get<{ Params: { kinds: string; id: string }; Querystring: { ref?: string } }>(
+    '/api/:kinds/:id',
+    async (req) => store.get(kindParam(req.params.kinds), req.params.id, req.query.ref),
   );
 
   app.put<{ Params: { kinds: string; id: string }; Body: unknown }>(
@@ -120,6 +133,48 @@ export async function buildApp(
 
   app.delete<{ Params: { kinds: string; id: string } }>('/api/:kinds/:id', async (req) =>
     store.delete(kindParam(req.params.kinds), req.params.id),
+  );
+
+  app.get<{ Params: { kinds: string; id: string } }>(
+    '/api/:kinds/:id/versions',
+    async (req): Promise<VersionStatus> => store.status(kindParam(req.params.kinds), req.params.id),
+  );
+
+  app.get<{ Params: { kinds: string; id: string } }>(
+    '/api/:kinds/:id/history',
+    async (req): Promise<HistoryResponse> =>
+      store.history(kindParam(req.params.kinds), req.params.id),
+  );
+
+  app.get<{ Params: { kinds: string; id: string }; Querystring: { from?: string; to?: string } }>(
+    '/api/:kinds/:id/diff',
+    async (req): Promise<DiffResponse> => {
+      const { from, to } = req.query;
+      if (!from || !to) throw new BadRequestError('both "from" and "to" are required');
+      return store.diff(kindParam(req.params.kinds), req.params.id, from, to);
+    },
+  );
+
+  app.post<{ Params: { kinds: string; id: string }; Body: MergeRequest | undefined }>(
+    '/api/:kinds/:id/merge',
+    async (req) => {
+      const body = req.body ?? {};
+      return store.merge(kindParam(req.params.kinds), req.params.id, {
+        branch: typeof body.branch === 'string' ? body.branch : undefined,
+        force: body.force === true,
+      });
+    },
+  );
+
+  app.delete<{ Params: { kinds: string; id: string; branch: string } }>(
+    '/api/:kinds/:id/branches/:branch',
+    async (req): Promise<DiscardBranchResponse> => ({
+      status: await store.discardBranch(
+        kindParam(req.params.kinds),
+        req.params.id,
+        req.params.branch,
+      ),
+    }),
   );
 
   app.get<{ Params: { kinds: string; id: string } }>('/api/:kinds/:id/references', async (req) => {
