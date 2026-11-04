@@ -314,7 +314,10 @@ When a user opens a project or template containing an instance pinned to an olde
 
 - The 10 built-in patterns and seeded demo content are ordinary editable, deletable entities.
 - **Settings → Restore defaults** re-adds any missing built-in pattern without touching edited ones **[default]**.
-- **Deleting an entity that is still referenced:** show the list of references and require confirmation. Referencing instances keep working by converting to local copies **[default]**.
+- **Deleting an entity that is still referenced** by a versioned entity (a version on main): show the list of references and require confirmation. For the referencing entities, the user chooses, for all at once or for each one individually:
+  - **Keep as local copy:** the referencing entity embeds a copy of the deleted entity's content and keeps working.
+  - **Replace with a placeholder:** the reference is removed. A placeholder shows that a referenced entity (last known name and version) was deleted.
+- **References that exist only on a draft branch** don't count: the entity is deleted without a prompt. A draft is not materialized yet, so a dangling reference on it is acceptable; the editor shows it as missing.
 
 ## 9. UI and UX
 

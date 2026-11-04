@@ -733,6 +733,33 @@ describe('versioning', () => {
     expect((await api('GET', `/api/agents/${id}?ref=nope`)).status).toBe(404);
   });
 
+  it('stores a merge note in the merge commit and shows it in the history', async () => {
+    await start();
+    const id = await createAgent();
+    await edit(id, { name: 'Second' });
+    const merged = await api<{ commit: { hash: string } }>('POST', `/api/agents/${id}/merge`, {
+      note: '  Tightened\n the plan  ',
+    });
+    expect(merged.status).toBe(200);
+    expect(git('log', '-1', '--format=%B', 'main').trim()).toBe(
+      `Merge agent ${id} (Second) as v2\n\nTightened the plan`,
+    );
+    const history = await api<HistoryResponse>('GET', `/api/agents/${id}/history`);
+    expect(history.body.versions.map((v) => [v.version, v.note])).toEqual([
+      ['v2', 'Tightened the plan'],
+      ['v1', undefined],
+    ]);
+    expect(history.body.versions[0]!.message).toBe(`Merge agent ${id} (Second) as v2`);
+
+    await edit(id, { name: 'Third' });
+    const tooLong = await api<{ error: string }>('POST', `/api/agents/${id}/merge`, {
+      note: 'x'.repeat(201),
+    });
+    expect(tooLong.status).toBe(400);
+    expect((await api('POST', `/api/agents/${id}/merge`, { note: 42 })).status).toBe(400);
+    expect(git('branch', '--list', `agent/${id}/draft`).trim()).not.toBe('');
+  });
+
   it('includes versions in full lists', async () => {
     await start();
     const id = await createAgent();

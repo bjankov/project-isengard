@@ -159,9 +159,13 @@ export async function buildApp(
     '/api/:kinds/:id/merge',
     async (req) => {
       const body = req.body ?? {};
+      if (body.note !== undefined && typeof body.note !== 'string') {
+        throw new BadRequestError('"note" must be a string');
+      }
       return store.merge(kindParam(req.params.kinds), req.params.id, {
         branch: typeof body.branch === 'string' ? body.branch : undefined,
         force: body.force === true,
+        note: body.note,
       });
     },
   );

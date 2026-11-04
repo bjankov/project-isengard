@@ -56,10 +56,14 @@ test('edit an agent on a draft, merge it as v2, then view history and diffs', as
   await expect(page.getByLabel('Description', { exact: true })).toHaveValue('Second description');
   await expect(indicator).toContainText('draft · 1 save');
 
-  // --- Merge: creates v2 and closes the draft
+  // --- Merge with a note: creates v2 and closes the draft
   const merge = header.getByRole('button', { name: 'Merge as v2' });
   await expect(merge).toBeEnabled();
   await merge.click();
+  const popover = page.getByRole('dialog').filter({ has: page.getByLabel('What changed?') });
+  await popover.getByLabel('What changed?').fill('Clearer description');
+  await shot(page, '10b-merge-note');
+  await popover.getByRole('button', { name: 'Merge as v2' }).click();
   await expect(page.getByText('Merged “Versioned agent” as v2').first()).toBeVisible();
   await expect(indicator).toContainText('v2');
   await expect(indicator).toContainText('main');
@@ -75,8 +79,8 @@ test('edit an agent on a draft, merge it as v2, then view history and diffs', as
   const sheet = page.getByRole('dialog', { name: /History of/ });
   await expect(sheet).toBeVisible();
   const timeline = sheet.getByRole('complementary', { name: 'History' });
-  await expect(timeline.getByRole('button', { name: /^v2/ })).toBeVisible();
-  await expect(timeline.getByRole('button', { name: /^v1/ })).toBeVisible();
+  await expect(timeline.getByRole('button', { name: /^v2/ })).toContainText('Clearer description');
+  await expect(timeline.getByRole('button', { name: /^v1/ })).toContainText('Created');
   await expect(sheet.getByLabel('Compare from')).toHaveText('v1');
   await expect(sheet.getByLabel('Compare to')).toHaveText(/v2/);
   const diff = sheet.getByTestId('diff-viewer');
@@ -160,6 +164,11 @@ test('a merge conflict shows main against the draft and can be merged anyway', a
 
   await page.goto(`/agents/${id}`);
   await page.locator('main header').getByRole('button', { name: 'Merge as v2' }).click();
+  await page
+    .getByRole('dialog')
+    .filter({ has: page.getByLabel('What changed?') })
+    .getByRole('button', { name: 'Merge as v2' })
+    .click();
   const dialog = page.getByRole('dialog', { name: 'Main changed since this draft started' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByTestId('diff-viewer')).toContainText('From main');

@@ -3,11 +3,13 @@ import { rmSync } from 'node:fs';
 import {
   BranchName,
   DRAFT_BRANCH,
+  MERGE_NOTE_MAX,
   ENTITY_KINDS,
   Settings,
   collectRefs,
   entityBranchName,
   makeEntityId,
+  normalizeMergeNote,
   safeParseEntity,
   versionName,
   versionNumber,
@@ -416,7 +418,13 @@ export class LibraryStore {
       const commit = (await this.git.revParse(`${tag}^{commit}`)) ?? '';
       // --first-parent: on main, a merge commit is the change that produced the version.
       const [last] = await this.git.log(['-1', '--first-parent', tag], root);
-      versions.push({ version, commit, date: last?.date ?? '', message: last?.message ?? '' });
+      versions.push({
+        version,
+        commit,
+        date: last?.date ?? '',
+        message: last?.message ?? '',
+        ...(last?.body ? { note: last.body } : {}),
+      });
     }
     const branches: HistoryResponse['branches'] = [];
     for (const b of status.branches) {
@@ -527,7 +535,7 @@ export class LibraryStore {
   async merge<K extends EntityKind>(
     kind: K,
     id: string,
-    opts: { branch?: string; force?: boolean } = {},
+    opts: { branch?: string; force?: boolean; note?: string } = {},
   ): Promise<{
     entity: EntityByKind[K];
     commit: CommitInfo;
@@ -566,7 +574,12 @@ export class LibraryStore {
       const version = versionName(
         (versionsOf(await this.git.listRefs(refs.tagPrefix))[0] ?? 0) + 1,
       );
-      const message = `Merge ${describe(kind, entity)} as ${version}`;
+      const subject = `Merge ${describe(kind, entity)} as ${version}`;
+      const note = normalizeMergeNote(opts.note);
+      if (note && note.length > MERGE_NOTE_MAX) {
+        throw new BadRequestError(`The merge note is longer than ${MERGE_NOTE_MAX} characters.`);
+      }
+      const message = note ? `${subject}\n\n${note}` : subject;
       const commit = requireCommit(
         await this.commitToMain(
           [

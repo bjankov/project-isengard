@@ -81,6 +81,8 @@ export interface VersionInfo {
   date: string;
   /** Message of the commit that produced this version's content. */
   message: string;
+  /** The note written when merging ("What changed?"), if any. */
+  note?: string;
 }
 
 /** `GET /api/<kind>/<id>/history`. */
@@ -109,10 +111,24 @@ export interface DiffResponse {
   files: FileDiff[];
 }
 
+/** Longest merge note, in characters. */
+export const MERGE_NOTE_MAX = 200;
+
 /** Body of `POST /api/<kind>/<id>/merge`. */
 export interface MergeRequest {
   /** Branch to merge; defaults to the draft. */
   branch?: string;
   /** Merge even though main changed since the branch started. */
   force?: boolean;
+  /**
+   * Optional one-line note on what changed (at most `MERGE_NOTE_MAX` characters). Stored as
+   * the body of the merge commit and shown in the history.
+   */
+  note?: string;
+}
+
+/** Normalize a merge note to one trimmed line; undefined when empty. */
+export function normalizeMergeNote(note: string | undefined): string | undefined {
+  const line = (note ?? '').replace(/\s+/g, ' ').trim();
+  return line === '' ? undefined : line;
 }

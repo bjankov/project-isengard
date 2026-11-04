@@ -1,7 +1,16 @@
-import { draftOf, versionName, versionNumber, type HistoryResponse } from '@app/schema';
+import {
+  MERGE_NOTE_MAX,
+  draftOf,
+  versionName,
+  versionNumber,
+  type HistoryResponse,
+} from '@app/schema';
 import { GitBranch, GitMerge, History, Loader2, Undo2 } from 'lucide-react';
 import { useState } from 'react';
 import { FileDiffs } from '@/components/diff-viewer';
+import { CharCounter } from '@/components/field';
+import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,7 +48,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import type { Versioning } from '@/hooks/use-entity-editor';
+import type { MergeOutcome, Versioning } from '@/hooks/use-entity-editor';
 import { useFetched } from '@/hooks/use-fetched';
 import { api } from '@/lib/api';
 import { formatDateTime, timeAgo } from '@/lib/time';
@@ -124,9 +133,20 @@ export function VersionActions({ versioning: v }: { versioning: Versioning }) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [conflict, setConflict] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [note, setNote] = useState('');
   if (!v.id || !v.status) return null;
   const draft = draftOf(v.status);
   const next = nextVersion(v.status.current);
+
+  const noteTooLong = note.trim().length > MERGE_NOTE_MAX;
+  const merge = async () => {
+    const outcome = await v.merge({ note });
+    if (outcome === 'failed') return;
+    setMergeOpen(false);
+    if (outcome === 'conflict') setConflict(true);
+    else setNote('');
+  };
 
   const mergeBlocked = v.dirty
     ? 'Save your changes first. Merge publishes what is saved on the draft.'
@@ -161,27 +181,68 @@ export function VersionActions({ versioning: v }: { versioning: Versioning }) {
             <Undo2 />
             Discard draft
           </Button>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              {/* span: disabled buttons do not fire the events tooltips need */}
-              <span tabIndex={mergeBlocked ? 0 : undefined}>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={!!mergeBlocked || v.busy}
-                  onClick={() =>
-                    void v.merge().then((outcome) => outcome === 'conflict' && setConflict(true))
-                  }
-                >
-                  {v.busy ? <Loader2 className="animate-spin" /> : <GitMerge />}
-                  Merge as {next}
-                </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-xs">
-              {mergeBlocked ?? `Publish the draft to main as ${next}. The draft branch is closed.`}
-            </TooltipContent>
-          </Tooltip>
+          <Popover open={mergeOpen} onOpenChange={setMergeOpen}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                {/* span: disabled buttons do not fire the events tooltips need */}
+                <span tabIndex={mergeBlocked ? 0 : undefined}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" disabled={!!mergeBlocked || v.busy}>
+                      {v.busy ? <Loader2 className="animate-spin" /> : <GitMerge />}
+                      Merge as {next}
+                    </Button>
+                  </PopoverTrigger>
+                </span>
+              </TooltipTrigger>
+              {!mergeOpen && (
+                <TooltipContent className="max-w-xs">
+                  {mergeBlocked ??
+                    `Publish the draft to main as ${next}. The draft branch is closed.`}
+                </TooltipContent>
+              )}
+            </Tooltip>
+            <PopoverContent align="end" className="w-96 space-y-3">
+              <form
+                className="space-y-3"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!noteTooLong) void merge();
+                }}
+              >
+                <div className="space-y-1.5">
+                  <div className="flex items-baseline justify-between">
+                    <label htmlFor="merge-note" className="text-sm font-medium">
+                      What changed?
+                    </label>
+                    <CharCounter value={note.trim()} max={MERGE_NOTE_MAX} />
+                  </div>
+                  <Input
+                    id="merge-note"
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    placeholder="Optional, e.g. tightened the review checklist"
+                    aria-invalid={noteTooLong}
+                    autoFocus
+                  />
+                  <p className="text-xs text-muted-foreground">Shown with {next} in the history.</p>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setMergeOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" size="sm" disabled={noteTooLong || v.busy}>
+                    {v.busy ? <Loader2 className="animate-spin" /> : <GitMerge />}
+                    Merge as {next}
+                  </Button>
+                </div>
+              </form>
+            </PopoverContent>
+          </Popover>
         </>
       )}
 
@@ -206,7 +267,18 @@ export function VersionActions({ versioning: v }: { versioning: Versioning }) {
         </AlertDialogContent>
       </AlertDialog>
 
-      <MergeConflictDialog versioning={v} open={conflict} onOpenChange={setConflict} next={next} />
+      <MergeConflictDialog
+        versioning={v}
+        open={conflict}
+        onOpenChange={setConflict}
+        next={next}
+        onMerge={() =>
+          v.merge({ force: true, note }).then((outcome) => {
+            if (outcome === 'merged') setNote('');
+            return outcome;
+          })
+        }
+      />
 
       <HistorySheet versioning={v} open={historyOpen} onOpenChange={setHistoryOpen} />
     </>
@@ -220,11 +292,13 @@ function MergeConflictDialog({
   open,
   onOpenChange,
   next,
+  onMerge,
 }: {
   versioning: Versioning;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   next: string;
+  onMerge: () => Promise<MergeOutcome>;
 }) {
   const id = v.id;
   const diff = useFetched(open && id ? `${v.kind}/${id}:conflict` : undefined, () =>
@@ -261,7 +335,7 @@ function MergeConflictDialog({
             variant="destructive"
             disabled={v.busy}
             onClick={() =>
-              void v.merge(true).then((outcome) => outcome === 'merged' && onOpenChange(false))
+              void onMerge().then((outcome) => outcome === 'merged' && onOpenChange(false))
             }
           >
             Merge anyway as {next}
@@ -312,7 +386,7 @@ function entriesOf(history: HistoryResponse): HistoryEntry[] {
     entries.push({
       spec: v.version,
       label: v.version,
-      detail: describeCommit(v.message),
+      detail: v.note ?? describeCommit(v.message),
       message: v.message,
       date: v.date,
       type: 'version',

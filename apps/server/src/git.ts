@@ -37,7 +37,10 @@ export interface RefEntry {
 export interface LogEntry {
   hash: string;
   date: string;
+  /** Subject line. */
   message: string;
+  /** Everything after the subject line, trimmed. */
+  body: string;
 }
 
 export class GitMissingError extends Error {
@@ -286,7 +289,7 @@ export class LibraryGit {
   async log(args: string[], path?: string): Promise<LogEntry[]> {
     const out = await this.run([
       'log',
-      '--format=%H%x00%cI%x00%s%x1e',
+      '--format=%H%x00%cI%x00%s%x00%b%x1e',
       ...args,
       ...(path ? ['--', path] : []),
     ]);
@@ -295,8 +298,8 @@ export class LibraryGit {
       .map((r) => r.trim())
       .filter(Boolean)
       .map((r) => {
-        const [hash = '', date = '', message = ''] = r.split('\0');
-        return { hash, date, message };
+        const [hash = '', date = '', message = '', body = ''] = r.split('\0');
+        return { hash, date, message, body: body.trim() };
       });
   }
 

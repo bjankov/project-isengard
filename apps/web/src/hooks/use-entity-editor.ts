@@ -2,6 +2,7 @@ import {
   DRAFT_BRANCH,
   KIND_PLURALS,
   draftOf,
+  normalizeMergeNote,
   safeParseEntity,
   type EntityByKind,
   type EntityInput,
@@ -112,8 +113,11 @@ export interface Versioning {
   /** Unsaved changes in the editor. */
   dirty: boolean;
   busy: boolean;
-  /** Merge the draft to main. `force` merges even if main changed since the draft started. */
-  merge: (force?: boolean) => Promise<MergeOutcome>;
+  /**
+   * Merge the draft to main, with an optional note on what changed. `force` merges even if
+   * main changed since the draft started.
+   */
+  merge: (opts?: { force?: boolean; note?: string }) => Promise<MergeOutcome>;
   /** Delete the draft and go back to main. */
   discard: () => Promise<void>;
 }
@@ -238,11 +242,14 @@ export function useEntityEditor<K extends EntityKind>(
   }, [draft, saving, kind, saved, upsert, navigate, setStatus, resetTo]);
 
   const merge = useCallback(
-    async (force = false): Promise<MergeOutcome> => {
+    async ({
+      force = false,
+      note,
+    }: { force?: boolean; note?: string } = {}): Promise<MergeOutcome> => {
       if (!saved || busy) return 'failed';
       setBusy(true);
       try {
-        const res = await api.merge(kind, saved.id, { force });
+        const res = await api.merge(kind, saved.id, { force, note: normalizeMergeNote(note) });
         upsert(kind, res.entity);
         setStatus(res.entity.id, res.status);
         setSaved(res.entity);

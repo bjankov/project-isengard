@@ -151,3 +151,14 @@ Format: date, milestone, decision, reason.
 - **Deleting is checked against references on `main` only.** A reference that exists only on a draft does not block deleting its target. M6 owns the deletion-with-references flow.
 - **History** lists main versions (from the tags) and each branch's unmerged commits. A version's date and message come from the commit on `main` that last changed the entity (`git log --first-parent`), so a migrated `v1` shows its real last edit.
 - **Diff** returns the raw files (YAML or SKILL.md) that differ, before and after. The raw text is what is stored and versioned.
+
+### M2 follow-up (2026-11-04)
+- **Deleting referenced entities (PLAN.md 8.4 updated, built in M6):**
+  - only references from versions on `main` count; references that exist only on a draft never block or prompt
+  - the user confirms, then chooses for the referencing entities, for all at once or for each one: keep as a local copy, or replace with a "deleted" placeholder showing the last known name and version
+  - Reason: user decision. A draft is not materialized, so a dangling reference there is acceptable.
+  - Until M6, deleting an entity referenced from `main` stays blocked.
+- **Merge notes:** merging takes an optional one-line note ("What changed?", at most 200 characters, whitespace collapsed).
+  - It is stored as the body of the merge commit, so it lives in git with no extra file.
+  - The history shows it under the version instead of the generic "Merged from the draft".
+  - M6 update notifications can list the notes between two versions as a changelog.

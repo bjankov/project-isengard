@@ -135,3 +135,14 @@ Open issues / questions:
 - **Projects (M3) and versioning:** all kinds, including projects, currently save to a draft. M3 should decide whether canvas autosave commits to the draft on every change.
 - **Version descriptions are generic** ("Created", "Merged from the draft"). There is no per-version note or changelog. Say if you want a short message when merging.
 - **Discarded draft commits** stay in the git object store until `git gc` removes them. Nothing in the app shows them again.
+
+### M2 follow-up (2026-11-04)
+Built:
+- **Merge notes:** **Merge as vN** opens a small popover with an optional "What changed?" line. The note is stored in the merge commit and shown under the version in the history.
+- **PLAN.md 8.4 updated** with the new rules for deleting referenced entities: only versions on `main` count; confirm, then keep as local copy or replace with a placeholder, for all at once or per entity. The work itself belongs to M6.
+
+How to try it: edit an agent, Save, click **Merge as v2**, type a note and merge. Open the history: v2 shows the note. `git -C ~/.app/library log -1 main` shows it as the commit body.
+
+Tests: 79 unit/API tests, 8 e2e tests (the M2 e2e tests now merge with a note).
+
+Deviations from PLAN.md: none (PLAN.md 8.4 changed by agreement).

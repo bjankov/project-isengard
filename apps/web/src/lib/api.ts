@@ -5,6 +5,7 @@ import {
   type DiffResponse,
   type DiscardBranchResponse,
   type HistoryResponse,
+  type MergeRequest,
   type MergeResponse,
   type VersionStatus,
   type EntityByKind,
@@ -90,7 +91,7 @@ export const api = {
   diff: (kind: EntityKind, id: string, from: string, to: string) =>
     apiFetch<DiffResponse>(`${path(kind, id)}/diff${query({ from, to })}`),
 
-  merge: <K extends EntityKind>(kind: K, id: string, opts: { force?: boolean } = {}) =>
+  merge: <K extends EntityKind>(kind: K, id: string, opts: MergeRequest = {}) =>
     apiFetch<MergeResponse<K>>(`${path(kind, id)}/merge`, {
       method: 'POST',
       body: JSON.stringify(opts),
