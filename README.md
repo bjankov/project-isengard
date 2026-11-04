@@ -27,6 +27,15 @@ Library entities are versioned in the library repo:
 `~/.app/library` always shows `main`. Inspect versions with git, e.g.
 `git -C ~/.app/library log --oneline --graph --all`.
 
+## Projects
+**Projects → New project**: give it a name and the path of the git repo it works on (the app
+offers `git init` if needed). The canvas opens:
+- add nodes from the palette (drag or click) or with `Ctrl/Cmd+K`; with one node selected, the
+  new node is added after it and connected
+- drag between handles to connect; click a node or edge to configure it on the right
+- `Ctrl/Cmd+Z` / `Ctrl/Cmd+Shift+Z` undo and redo, `Ctrl/Cmd+C`/`V` copy and paste, `Delete`
+  removes the selection, `Ctrl/Cmd+S` saves (to the project's draft)
+
 ## Check
 ```sh
 pnpm check        # typecheck + lint + unit/API tests

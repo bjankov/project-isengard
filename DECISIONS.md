@@ -163,3 +163,47 @@ Format: date, milestone, decision, reason.
   - The history shows it under the version instead of the generic "Merged from the draft".
   - M6 update notifications can list the notes between two versions as a changelog.
 - **No canvas autosave in v1 (PLAN.md 9.3 updated).** The canvas saves explicitly (Save / Ctrl+S, to the draft branch) with the unsaved-changes guard, like every other editor. Reason: user decision. It keeps editors consistent and git history clean, and saving is already safe because `main` only changes on merge. Autosave is in `V2_BACKLOG.md`.
+
+## 2026-11-04 (M3)
+
+### Scope agreed at planning
+- **Decision nodes in M3:**
+  - built here: the evaluator type, a plain code box (deterministic), agent + criteria, human instructions + feedback toggle, and the exits list (label, max loops)
+  - left for M4: the Python Monaco editor with file drop, `onExhausted`, join modes and every validation rule, including "a back-edge without a cap blocks saving"
+- **Agent forks (lite):**
+  - **Customize for this project** creates the branch `fork-<project id>-<node id>` at the pinned version, and the node pins that branch. It shows "modified".
+  - **Edit fork** opens the normal agent editor with `?branch=`; Save commits to the fork branch only.
+  - Not built yet: promoting forks (merge, or save as a new agent) and deleting them, both M5/M6.
+  - Reason: agreed at planning.
+- **Templates:**
+  - **Save as template** copies a project's workflow and layout (not overrides or workspace) into a new template, and New project can start from one.
+  - There is no template editor.
+  - A template made from a project with forks keeps pinning those fork branches.
+
+### Workspace
+- **Rules:**
+  - the path must be absolute (`~` is expanded) and point at an existing folder that is the root of a git repo
+  - for a folder inside a repo, the UI offers the repo root
+  - for a plain folder, it offers `git init` after confirmation
+  - the library store, and folders containing it, are refused
+  - the path is stored expanded
+- **When it's checked:** when a project is created and whenever its path changes, not on every save. A workspace that disappears later doesn't block saving the project.
+- **Folder suggestions** come from `GET /api/workspace/suggest`, which lists folders only (hidden ones only when typed) and marks git repos.
+
+### Canvas
+- **Connections:**
+  - **refused:** anything into an Input, out of an Output, to or from a Note, a node to itself, a decision without choosing an exit, and duplicates
+  - the reason is shown as a toast, including when dropping on a node without a handle
+- **Payload inference:**
+  - Input → its payload type; Artifact → file; a Decision exit → its input's payload; everything else → text
+  - edges into a shared store default to write access, edges out of one to read
+- **Loops:** loop edges are found with strongly connected components. An edge "in a loop" gets the history toggle; the edge that closes a loop (a back-edge, from a depth-first walk starting at the Inputs) is drawn curved under the nodes with its cap badge. History left unset means "latest only", the PLAN.md default.
+- **Placing nodes:**
+  - quick-add (`Ctrl/Cmd+K`) and palette clicks add the new node after the single selected node and connect it (from a decision's first unconnected exit); otherwise it goes to the view's center
+  - new nodes never overlap others, and the view pans to them
+  - the palette also supports drag and drop
+- **View:** pan and zoom are not saved; a project opens zoomed to fit. Only node positions (and note sizes) go to `layout.json`.
+- **Undo/redo:** a per-session history of project snapshots, 200 steps. Typing in one field, or dragging, counts as one step. It survives saves and is cleared on reload.
+- **Copy/paste:** copying keeps the nodes, the edges between them and their agent overrides for the session, so they can be pasted into another project.
+- **Blank projects** start with an unconnected Input and Output.
+- React Flow node types are prefixed `wf-` so React Flow's built-in `input`/`output` styles never apply.

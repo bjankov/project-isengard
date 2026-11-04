@@ -359,6 +359,8 @@ test('save a workflow as a template and start a new project from it', async ({ p
   await expect(page.getByText('Saved template “Single agent”').first()).toBeVisible();
 
   await page.getByRole('link', { name: 'Projects', exact: true }).click();
+  await expect(page.getByRole('link', { name: /Template source/ })).toBeVisible();
+  await shot(page, '26-projects-list');
   const templates = page.getByRole('region', { name: 'Workflow templates' });
   await templates
     .getByRole('listitem')

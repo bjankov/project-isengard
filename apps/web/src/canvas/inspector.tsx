@@ -24,7 +24,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { WorkspaceField } from '@/components/workspace-field';
 import { errorAt, type FieldErrors } from '@/lib/validation';
-import { useEntities } from '@/stores/library';
+import { useEntities, useVersions } from '@/stores/library';
 import { AgentInspector } from './agent-inspector';
 import { nodeTitle, updateEdge, updateNode, type Change, type ProjectDoc } from './doc';
 import { EnumSelect, OptionalNumber, StringList } from './fields';
@@ -593,6 +593,9 @@ function DecisionFields({
   err: (field: string) => string | undefined;
 }) {
   const agents = useEntities('agent');
+  const agentVersions = useVersions('agent');
+  /** New references pin the agent's current version. */
+  const pinOf = (id: string) => agentVersions[id]?.version ?? 'v1';
   const loops = analyzeLoops(doc.workflow);
   const ev = node.evaluator;
   const setEvaluator = (evaluator: Evaluator, key: string) =>
@@ -627,7 +630,7 @@ function DecisionFields({
                   criteria: '',
                   agent: {
                     kind: 'agent',
-                    agent: { kind: 'agent', id: firstAgent.id, version: 'v1' },
+                    agent: { kind: 'agent', id: firstAgent.id, version: pinOf(firstAgent.id) },
                   },
                 },
                 'evaluator',
@@ -661,7 +664,10 @@ function DecisionFields({
               options={(agents ?? []).map((a) => ({ value: a.id, label: a.name }))}
               onChange={(id) =>
                 setEvaluator(
-                  { ...ev, agent: { kind: 'agent', agent: { kind: 'agent', id, version: 'v1' } } },
+                  {
+                    ...ev,
+                    agent: { kind: 'agent', agent: { kind: 'agent', id, version: pinOf(id) } },
+                  },
                   'evalAgent',
                 )
               }
