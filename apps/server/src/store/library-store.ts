@@ -3,6 +3,7 @@ import { rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
   ENTITY_KINDS,
+  Settings,
   collectRefs,
   makeEntityId,
   safeParseEntity,
@@ -15,7 +16,10 @@ import {
 import type { ZodError } from 'zod';
 import { LibraryIndex, type IndexEntry } from '../index/library-index.js';
 import { LibraryGit, MAIN_BRANCH } from '../git.js';
-import { LAYOUTS, type KindLayout } from './layout.js';
+import { DEFAULT_SETTINGS } from './default-settings.js';
+import { LAYOUTS, fromYaml, toYaml, type KindLayout } from './layout.js';
+
+const SETTINGS_PATH = 'settings.yaml';
 
 export class NotFoundError extends Error {
   constructor(kind: EntityKind, id: string) {
@@ -31,6 +35,19 @@ export class EntityValidationError extends Error {
   ) {
     super(message);
     this.name = 'EntityValidationError';
+  }
+}
+
+/** Deleting an entity that other entities still reference. */
+export class ReferencedError extends Error {
+  constructor(
+    kind: EntityKind,
+    id: string,
+    readonly references: (EntitySummary & { version: string })[],
+  ) {
+    const names = references.map((r) => `${r.kind} "${r.name}"`).join(', ');
+    super(`${kind} "${id}" is still used by ${names}. Remove it from those first.`);
+    this.name = 'ReferencedError';
   }
 }
 
@@ -52,6 +69,7 @@ Managed by the app. Every entity is a human-readable file and every change is a 
 - \`patterns/<id>/pattern.yaml\` + \`layout.json\`: patterns
 - \`templates/<id>/workflow.yaml\` + \`layout.json\`: workflow templates
 - \`projects/<id>/project.yaml\` + \`workflow.yaml\` + \`layout.json\`: projects
+- \`settings.yaml\`: model list and defaults for new agents
 
 \`layout.json\` files hold node positions only, so moving boxes is not a semantic change.
 `;
@@ -99,6 +117,11 @@ export class LibraryStore {
       await git.commitPaths(paths, 'Initialize library store');
     }
 
+    if (!(await git.readFile(SETTINGS_PATH))) {
+      await writeFile(join(libraryDir, SETTINGS_PATH), toYaml(DEFAULT_SETTINGS));
+      await git.commitPaths([SETTINGS_PATH], 'Add default settings');
+    }
+
     const store = new LibraryStore(git, new LibraryIndex(indexPath));
     if (store.index.head !== (await git.head())) await store.rebuildIndex();
     return store;
@@ -116,6 +139,11 @@ export class LibraryStore {
 
   list(kind: EntityKind, query?: string): EntitySummary[] {
     return this.index.list(kind, query);
+  }
+
+  /** Complete entities of a kind (from the index cache). */
+  listFull<K extends EntityKind>(kind: K): EntityByKind[K][] {
+    return this.index.listFull(kind) as EntityByKind[K][];
   }
 
   async get<K extends EntityKind>(kind: K, id: string): Promise<EntityByKind[K]> {
@@ -192,6 +220,20 @@ export class LibraryStore {
     return this.git.exclusive(async () => {
       const layout = layoutOf(kind);
       if (!(await this.exists(kind, id))) throw new NotFoundError(kind, id);
+      const users = this.index
+        .incoming(kind, id)
+        .filter((r) => !(r.kind === kind && r.id === id))
+        .map((r) => {
+          const s = this.index.summary(r.kind, r.id);
+          return {
+            kind: r.kind,
+            id: r.id,
+            name: s?.name ?? r.id,
+            description: s?.description ?? '',
+            version: r.version,
+          };
+        });
+      if (users.length > 0) throw new ReferencedError(kind, id, users);
       const root = layout.root(id);
       const summary = this.index.list(kind).find((s) => s.id === id);
       try {
@@ -233,7 +275,33 @@ export class LibraryStore {
     return {
       summary: { kind, id: entity.id, name: entity.name, description: entity.description },
       refs: collectRefs(kind, entity),
+      data: entity,
     };
+  }
+
+  // ---- Settings ----
+
+  async getSettings(): Promise<Settings> {
+    const result = Settings.safeParse(fromYaml(await this.git.readFile(SETTINGS_PATH)));
+    if (!result.success)
+      throw new EntityValidationError('stored settings are invalid', result.error);
+    return result.data;
+  }
+
+  async updateSettings(input: unknown): Promise<{ settings: Settings; commit: CommitInfo | null }> {
+    return this.git.exclusive(async () => {
+      const result = Settings.safeParse(input);
+      if (!result.success) throw new EntityValidationError('invalid settings', result.error);
+      try {
+        await writeFile(join(this.git.dir, SETTINGS_PATH), toYaml(result.data));
+        const commit = await this.git.commitPaths([SETTINGS_PATH], 'Update settings');
+        if (commit) this.index.head = commit.hash;
+        return { settings: result.data, commit };
+      } catch (err) {
+        await this.git.discard([SETTINGS_PATH]);
+        throw err;
+      }
+    });
   }
 
   // ---- Index ----

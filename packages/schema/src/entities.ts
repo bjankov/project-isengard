@@ -34,6 +34,11 @@ export const Project = EntityMeta.extend({
 });
 export type Project = z.infer<typeof Project>;
 
+/** Stable string key for a model, e.g. "anthropic/claude-sonnet-5-5". */
+export function modelKey(m: ModelRef): string {
+  return `${m.provider}/${m.model}`;
+}
+
 /** App settings: the static model list and defaults for new agents. */
 export const ModelOption = ModelRef.extend({
   label: z.string().trim().min(1).optional(),
@@ -41,7 +46,19 @@ export const ModelOption = ModelRef.extend({
 export type ModelOption = z.infer<typeof ModelOption>;
 
 export const Settings = z.object({
-  models: z.array(ModelOption).default([]),
+  models: z
+    .array(ModelOption)
+    .default([])
+    .superRefine((models, ctx) => {
+      const seen = new Set<string>();
+      models.forEach((m, i) => {
+        const key = modelKey(m);
+        if (seen.has(key)) {
+          ctx.addIssue({ code: 'custom', message: `duplicate model "${key}"`, path: [i, 'model'] });
+        }
+        seen.add(key);
+      });
+    }),
   agentDefaults: AgentDefaults,
 });
 export type Settings = z.infer<typeof Settings>;

@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   ENTITY_KINDS,
   EntityId,
+  Settings,
   ToolPreset,
+  describeScope,
   Version,
   WorkflowGraph,
   collectRefs,
@@ -170,5 +172,66 @@ describe('collectRefs', () => {
     expect(collectRefs('pattern', p)).toEqual([
       { kind: 'agent', id: 'executor-eeeeee', version: 'v1' },
     ]);
+  });
+});
+
+describe('describeScope', () => {
+  const base = { id: 'a-aaaaaa', name: 'x', description: '' };
+
+  it('describes path scopes', () => {
+    const p = ToolPreset.parse({
+      ...base,
+      builtin: 'read_file',
+      scope: { paths: ['src/**', 'docs/*.md'] },
+    });
+    expect(describeScope(p)).toEqual({
+      summary: 'read src/**, docs/*.md',
+      items: ['src/**', 'docs/*.md'],
+      unrestricted: false,
+    });
+  });
+
+  it('describes shell allowlists and flags unrestricted shell', () => {
+    const p = ToolPreset.parse({
+      ...base,
+      builtin: 'shell',
+      scope: {
+        commands: [
+          { match: 'exact', command: 'npm test' },
+          { match: 'prefix', command: 'git diff' },
+        ],
+      },
+    });
+    expect(describeScope(p).summary).toBe('shell: npm test, git diff …');
+    const open = ToolPreset.parse({ ...base, builtin: 'shell', scope: {} });
+    expect(describeScope(open)).toMatchObject({
+      unrestricted: true,
+      summary: 'shell: any command (unrestricted)',
+    });
+  });
+
+  it('describes domain scopes', () => {
+    const any = ToolPreset.parse({ ...base, builtin: 'web_search', scope: {} });
+    expect(describeScope(any).summary).toBe('search any domain');
+    const some = ToolPreset.parse({
+      ...base,
+      builtin: 'web_fetch',
+      scope: { allow: ['docs.python.org'], deny: ['evil.example.com'] },
+    });
+    expect(describeScope(some).summary).toBe('fetch only docs.python.org except evil.example.com');
+  });
+});
+
+describe('settings', () => {
+  const agentDefaults = {
+    model: { provider: 'anthropic', model: 'claude-sonnet-5-5' },
+    effort: 'medium',
+    limits: { maxIterations: 1, maxTokens: 1, maxWallTimeSeconds: 1 },
+  };
+
+  it('rejects duplicate models', () => {
+    const m = { provider: 'anthropic', model: 'claude-sonnet-5-5' };
+    expect(Settings.safeParse({ models: [m, m], agentDefaults }).success).toBe(false);
+    expect(Settings.safeParse({ models: [m], agentDefaults }).success).toBe(true);
   });
 });

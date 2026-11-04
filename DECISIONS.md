@@ -62,3 +62,36 @@ Format: date, milestone, decision, reason.
 
 ### Web
 - **react-router** for tab routing (approved). shadcn/ui is set up with `components.json`, the `@/` alias and the zinc theme. The UI shows the placeholder name "Workflow Designer" until a name is chosen.
+
+## 2026-11-03 (M1)
+
+### Agreed at planning (approved by the user)
+- **References pin `v1` until M2.** M2 will tag each entity's current state on `main` as `v1` when it first runs, so "merging creates v2" stays correct.
+- **Settings live in `library/settings.yaml`** and are committed like everything else.
+  - Written with defaults when a library is initialized, or when an existing library has none (commit `Add default settings`).
+  - The library location is shown read-only. Change it with `APP_HOME`.
+- **Default model list:** `anthropic` Opus 5.5, Sonnet 5.5, Haiku 5.5, Fable 5.1. Agent defaults: Sonnet 5.5, medium effort, 20 iterations, 200k tokens, 600 s.
+- **Deleting a referenced entity is blocked.** `DELETE` returns `409` with the referencing entities, and the UI lists them with links. M6 replaces this with the full flow (show references, convert to local copies).
+- **Models removed from Settings while agents still use them:** allowed. The agent editor shows a "not in model list" warning.
+- **No version or branch indicator in editors yet.** That is M2.
+- **Libraries:** Monaco (`monaco-editor`, `@monaco-editor/react`). `cmdk` and `sonner` came with their shadcn components. `@playwright/test` is a dev dependency. No react-hook-form or TanStack Query.
+
+### Made during implementation
+- **The index caches each full entity as JSON** (index schema v2; old indexes rebuild automatically). `GET /api/<kind>?full=1` returns complete entities from the index, so lists can show scopes, models and badges without reading git per item. Single reads still come from git.
+- **The web client caches complete entity lists per kind in Zustand.** Editors start from the cached entity and update the cache from the save response.
+- **Monaco is bundled locally**: the editor core, markdown and python syntax, and one generic editor worker. It is lazy-loaded, so the rest of the UI doesn't wait for it (about 2.7 MB, in its own chunk).
+- **Validation runs in the browser with the shared Zod schemas** and again on the server. Field errors appear after the first save attempt, then update live.
+- **Editors mount only once their data is ready** (`useEditorSource`), so their state initializes directly, without effects.
+- **The unsaved-changes guard** uses react-router's `useBlocker` plus `beforeunload`. Navigation after a save or delete passes `state: { skipGuard: true }` to go through.
+- **Ctrl/Cmd+S saves** in every editor and in Settings.
+- **Skill names are normalized as you type** to the Agent Skills format: lowercase, spaces become hyphens, invalid characters dropped.
+- **Tool presets:**
+  - The built-in is fixed after creation, because each built-in has a different scope shape.
+  - A new shell preset starts with one empty command row, so going unrestricted takes a deliberate removal.
+  - A new path preset starts with one empty glob.
+  - Path presets need at least one glob.
+- **Settings reject duplicate models** (same provider and model id).
+- **Toasts sit bottom-left.** Bottom-right toasts covered the right-aligned pickers, and hovering a toast pauses its dismissal.
+- **The sonner theme is fixed to light** (no `next-themes`) until dark mode in M7.
+- **E2E tests use the installed Chrome** (`channel: 'chrome'`, no browser download). Each run gets a fresh temp `APP_HOME`, with the API on :4417 and the web app on :5299.
+- The `shadcn add` alias bug happened again. It installed the unrelated `cn` and `next-themes` packages. Both were removed and the imports fixed by hand.
