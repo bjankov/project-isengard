@@ -14,8 +14,9 @@ import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { ApiError, api } from '@/lib/api';
 import { errorAt, issuesToErrors, type FieldErrors } from '@/lib/validation';
 import { useSettings, useSettingsStore } from '@/stores/settings';
+import { sameData } from '@/lib/same';
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+const same = sameData;
 
 export function SettingsPage() {
   const saved = useSettings();

@@ -2,7 +2,12 @@
  * How each entity kind is laid out as files in the library store (PLAN.md 5.4).
  * The entity id is never written into the files; it is the file or folder name.
  */
-import type { EntityByKind, EntityKind } from '@app/schema';
+import {
+  skillFromMarkdown,
+  skillToMarkdown,
+  type EntityByKind,
+  type EntityKind,
+} from '@app/schema';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
 export type FileMap = Record<string, string>;
@@ -40,21 +45,6 @@ function fromJson(text: string | undefined): unknown {
   return text === undefined ? undefined : JSON.parse(text);
 }
 
-// ---- SKILL.md frontmatter ----
-
-/** Opening `---`, YAML, closing `---` at the start of its own line, then the body. */
-const FRONTMATTER = /^---\r?\n(?:([\s\S]*?)\r?\n)?---(?:\r?\n|$)([\s\S]*)$/;
-
-export function writeSkillMd(frontmatter: Record<string, unknown>, body: string): string {
-  return `---\n${toYaml(frontmatter)}---\n\n${body}`;
-}
-
-export function readSkillMd(text: string): { frontmatter: Record<string, unknown>; body: string } {
-  const m = FRONTMATTER.exec(text);
-  if (!m) return { frontmatter: {}, body: text };
-  return { frontmatter: fromYaml(m[1] ?? ''), body: (m[2] ?? '').replace(/^\r?\n/, '') };
-}
-
 // ---- Layouts ----
 
 function fileLayout<K extends EntityKind>(dir: string): KindLayout<K> {
@@ -76,15 +66,17 @@ const skills: KindLayout<'skill'> = {
   dir: 'skills',
   root: (id) => `skills/${id}`,
   idFromChild: (child) => child,
-  serialize: ({ id, name, description, body }) => ({
-    [`skills/${id}/SKILL.md`]: writeSkillMd({ name, description }, body),
-  }),
+  serialize: ({ id, ...content }) => ({ [`skills/${id}/SKILL.md`]: skillToMarkdown(content) }),
   files: (id) => [`skills/${id}/SKILL.md`],
   deserialize: (id, files) => {
     const text = files[`skills/${id}/SKILL.md`];
     if (text === undefined) return { id };
-    const { frontmatter, body } = readSkillMd(text);
-    return { id, name: frontmatter.name, description: frontmatter.description, body };
+    try {
+      return { ...skillFromMarkdown(text), id };
+    } catch (err) {
+      // Invalid YAML: return something that fails validation with a readable message.
+      return { id, name: undefined, description: err instanceof Error ? err.message : String(err) };
+    }
   },
 };
 
