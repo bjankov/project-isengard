@@ -275,3 +275,9 @@ Format: date, milestone, decision, reason.
   - each input is one line in plain words from `describe-context.ts` (unit tested); loop inputs show their history, and related problems show inline
   - no file contents (the app doesn't read workspaces) and no token figures
 - **The e2e reload check** in the M3 demo test now compares screenshots with a small tolerance (≤ 200 pixels, ≤ 64/255 each), because problem outlines and long thin edges antialias slightly differently depending on when they render. Node positions and problem markers are still compared exactly through the DOM.
+
+### M4 review answers (2026-11-05, user decisions)
+- Projects from M3 with an uncapped loop stay unsaveable until capped (the fix is offered). No migration.
+- Unclear glob coverage stays an **error**, not a "can't confirm" warning. To revisit later.
+- Moving toasts away from the problems bar is polish for M7.
+- A context preview for evaluator agents in decisions is deferred (not scheduled yet).

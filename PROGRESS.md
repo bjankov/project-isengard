@@ -249,9 +249,9 @@ Deviations from PLAN.md:
   - 7.5: which inputs count for a join
   - 9.5: errors block merging
 
-Open issues / questions:
-- **Projects saved in M3 with an uncapped loop** still open, but can't be saved until the loop is capped; the problem and its fix are shown.
-- **Glob coverage is conservative.** An artifact path that is itself a glob counts as covered only when containment is clear (`src/**` covers `src/api/**`; `**/*.ts` doesn't cover `src/*.ts`). Say if you'd rather show "can't confirm" as a warning instead of an error.
-- **Toasts sit bottom-left, so they briefly cover the left end of the problems bar.** Moving them (e.g. top-centre) would change every editor; say if you want that.
-- **Context preview covers agent nodes only.** An evaluator agent in a decision has no preview yet; it would show the decision's input and the criteria.
-- **Templates are checked on the server like projects** (uncapped loops block creating one), but there is no template editor to show their problems.
+Open issues / questions (answered by the user on 2026-11-05):
+- **Projects saved in M3 with an uncapped loop** open, but can't be saved until the loop is capped; the problem and its fix are shown. **Answer: OK as is.**
+- **Glob coverage is conservative.** An artifact path that is itself a glob counts as covered only when containment is clear; anything else is an error. **Answer: keep it an error for now; revisit later.**
+- **Toasts sit bottom-left, so they briefly cover the left end of the problems bar.** **Answer: polish, later (M7).**
+- **Context preview covers agent nodes only.** An evaluator agent in a decision has no preview yet. **Answer: later.**
+- Templates are checked on the server like projects (uncapped loops block creating one), but there is no template editor to show their problems.
