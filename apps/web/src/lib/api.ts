@@ -8,6 +8,8 @@ import {
   type MergeRequest,
   type MergeResponse,
   type VersionStatus,
+  type WorkspaceCheck,
+  type WorkspaceSuggestions,
   type EntityByKind,
   type EntityInput,
   type EntityKind,
@@ -75,8 +77,9 @@ export const api = {
       body: JSON.stringify(input),
     }),
 
-  update: <K extends EntityKind>(kind: K, id: string, input: EntityInput<K>) =>
-    apiFetch<EntityMutationResponse<K>>(path(kind, id), {
+  /** Save to the draft, or to an existing `branch` such as a fork. */
+  update: <K extends EntityKind>(kind: K, id: string, input: EntityInput<K>, branch?: string) =>
+    apiFetch<EntityMutationResponse<K>>(`${path(kind, id)}${query({ branch })}`, {
       method: 'PUT',
       body: JSON.stringify(input),
     }),
@@ -96,6 +99,41 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(opts),
     }),
+
+  /** Create a named branch (a fork) at a main version. */
+  createBranch: (kind: EntityKind, id: string, name: string, from: string) =>
+    apiFetch<DiscardBranchResponse>(`${path(kind, id)}/branches`, {
+      method: 'POST',
+      body: JSON.stringify({ name, from }),
+    }),
+
+  /** Create a project; with `createWorkspace` the server also creates its folder and git repo. */
+  createProject: (input: EntityInput<'project'>, opts: { createWorkspace?: boolean } = {}) =>
+    apiFetch<EntityMutationResponse<'project'>>(
+      `/projects${query({ createWorkspace: opts.createWorkspace ? '1' : undefined })}`,
+      { method: 'POST', body: JSON.stringify(input) },
+    ),
+
+  checkNewWorkspace: (path: string) =>
+    apiFetch<WorkspaceCheck>('/workspace/check-new', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
+
+  checkWorkspace: (path: string) =>
+    apiFetch<WorkspaceCheck>('/workspace/check', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
+
+  initWorkspace: (path: string) =>
+    apiFetch<WorkspaceCheck>('/workspace/init', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
+
+  suggestWorkspaces: (path: string) =>
+    apiFetch<WorkspaceSuggestions>(`/workspace/suggest${query({ path })}`),
 
   discardBranch: (kind: EntityKind, id: string, branch: string) =>
     apiFetch<DiscardBranchResponse>(`${path(kind, id)}/branches/${encodeURIComponent(branch)}`, {

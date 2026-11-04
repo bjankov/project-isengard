@@ -146,3 +146,61 @@ How to try it: edit an agent, Save, click **Merge as v2**, type a note and merge
 Tests: 79 unit/API tests, 8 e2e tests (the M2 e2e tests now merge with a note).
 
 Deviations from PLAN.md: none (PLAN.md 8.4 changed by agreement).
+
+## M3: Projects and canvas (2026-11-04)
+Status: done
+
+Built:
+- **Projects tab:**
+  - project cards with version and draft badge, and workflow templates
+  - **New project**: name, description, workspace path (checked as you type, folder suggestions, `git init` offered with confirmation), start blank or from a template
+- **Canvas** (React Flow):
+  - every node type except Pattern; decisions are diamonds with one handle per exit
+  - palette (click or drag) and `Ctrl/Cmd+K` quick-add; with one node selected, the new node is added after it and connected
+  - refused connections say why
+  - edges show their context mode; loop-back edges are curved with a `max N` / `no cap` badge
+  - undo/redo, copy/paste (with overrides), delete, select all, minimap, zoom to fit, explicit Save (`Ctrl/Cmd+S`) with the unsaved-changes guard
+  - versioning header (draft, Merge, History) like the library editors
+- **Inspector:**
+  - the project (name, description, workspace)
+  - every node type, and edges: payload (inferred, can be changed), context mode with its settings, history on loop edges, access on shared-store edges, the loop cap of a decision exit
+- **Agent nodes:**
+  - **Project overrides** (model, effort, limits) show the inherited values and never fork
+  - **Agent definition** (prompt, skills, tools) is read-only, with **Customize for this project**, which forks the agent onto a project branch; **Edit fork** opens it in the agent editor
+- **Templates:** **Save as template** on a project; New project can start from a template.
+- **Layout:** positions saved to `layout.json`, separate from the graph. A project opens zoomed to fit.
+- **API:**
+  - `POST /api/workspace/check`, `/init`; `GET /api/workspace/suggest`
+  - `POST /api/<kind>/<id>/branches`; `PUT …?branch=`
+  - projects must point at a git repo root
+
+How to try it:
+1. `pnpm dev`. Create agents named Planner, Executor and Tester in **Agents** if you don't have them.
+2. **Projects → New project**: type a folder path. If it isn't a git repo, click **Initialize git here**. Create.
+3. Click the **Task** node, press `Ctrl/Cmd+K`, type "Planner", Enter. Repeat for "Artifact" (set Path to `PLAN.md`), "Executor", "Artifact" (`src/**`, file type Code), "Tester", "Decision" (Question "tests pass?").
+4. Drag from the decision's **pass** handle to **Result**, and from **fail** to **Executor**. Click the loop edge's label: set Max loops 3, Context mode Summary.
+5. Click the Executor: set Effort to High under **Project overrides**. Try **Customize for this project** to fork it.
+6. `Ctrl/Cmd+S`, reload: everything is where you left it. Try `Ctrl/Cmd+Z`, copy/paste and Delete.
+7. `pnpm check` (103 unit/API tests), `pnpm test:e2e` (13 browser tests, 5 new: demo workflow 1 built by hand and identical after reload, editing interactions, forks, templates, every node type).
+
+Deviations from PLAN.md:
+- **Decision nodes are partly done:** evaluator type, basic evaluator fields, exits and loop caps. The Monaco Python editor with file drop, `onExhausted`, join modes and validation (including blocking a save with an uncapped loop) are M4. Agreed at planning.
+- **Agent forks can be created and edited, not promoted or deleted.** That's M5/M6. Agreed at planning.
+
+Open issues / questions:
+- **Project cards show `main`, not the draft.** All canvas work goes to the draft, so a new project's card still says "2 nodes" until you merge. This follows the M2 rule that lists show `main`, but for projects it may be confusing. Should project cards show the draft's state instead?
+- **Long chains look small when zoomed to fit,** since quick-add builds left to right. There is no automatic layout; M7 (polish) could add a "tidy up" action.
+- **Forks are created right away.** If you fork and then discard your unsaved project changes, the fork branch stays in the library unused. It's invisible in the UI and harmless.
+- **Templates made from projects with forks** keep pinning those projects' fork branches.
+- **Performance with 100 nodes** isn't measured yet (M7).
+
+### M3 follow-up (2026-11-04)
+Built:
+- **New project creates its workspace folder.** **New folder** is the default: choose a location (remembered) and a folder name (follows the project name). The dialog shows the full path, and creating the project makes the folder and runs `git init`. **Existing repo** keeps the previous flow, including the `git init` offer.
+- `POST /api/workspace/check-new`, and `POST /api/projects?createWorkspace=1`, which validates the project before creating the folder.
+
+How to try it: **Projects → New project**, type a name, keep **New folder**, set a location (e.g. `~/code/`), Create. `ls -a <location>/<folder>` shows `.git`.
+
+Tests: 105 unit/API tests (2 new), 13 e2e tests (the demo workflow test now uses a new folder; the template test covers an existing folder with `git init`).
+
+Deviations from PLAN.md: none. PLAN.md 9.2 asks for a workspace path "validated as a git repo, with git init offered"; creating the folder is an addition.

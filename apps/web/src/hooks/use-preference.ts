@@ -28,3 +28,20 @@ export function useBooleanPreference(
   );
   return [value, set];
 }
+
+/** A per-browser string preference; undefined when not set or storage is unavailable. */
+export function readPreference(key: string): string | undefined {
+  try {
+    return localStorage.getItem(key) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function writePreference(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Storage unavailable: nothing to remember.
+  }
+}

@@ -12,14 +12,10 @@ import {
   type HistoryResponse,
   type ReferencesResponse,
   type VersionStatus,
+  type WorkspaceCheck,
+  type WorkspaceSuggestions,
 } from '@app/schema';
-import {
-  SAMPLE_INPUTS,
-  sampleAgent,
-  sampleProject,
-  sampleReadTool,
-  sampleSkill,
-} from '@app/schema/testing';
+import { SAMPLE_INPUTS, sampleAgent, sampleReadTool, sampleSkill } from '@app/schema/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp, type BuiltApp } from './app.js';
 import { loadConfig, type AppConfig } from './config.js';
@@ -65,10 +61,21 @@ function listAll(): Promise<Record<EntityKind, EntityListItem[]>> {
   ).then(Object.fromEntries);
 }
 
+let workspace: string;
+
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'app-test-'));
   config = loadConfig({ APP_HOME: home });
+  workspace = join(home, 'workspace');
+  mkdirSync(workspace);
+  execFileSync('git', ['init', '-q'], { cwd: workspace });
 });
+
+/** Sample input of a kind; projects point at the test's workspace repo. */
+function sampleInput(kind: EntityKind): Record<string, unknown> {
+  const input = SAMPLE_INPUTS[kind] as Record<string, unknown>;
+  return kind === 'project' ? { ...input, workspacePath: workspace } : input;
+}
 
 afterEach(async () => {
   await stop();
@@ -122,10 +129,10 @@ const EXPECTED_FILES: Record<EntityKind, (id: string) => string[]> = {
 
 describe.each(ENTITY_KINDS)('CRUD for %s', (kind) => {
   const plural = KIND_PLURALS[kind];
-  const input = SAMPLE_INPUTS[kind] as Record<string, unknown>;
 
   it('creates, reads, updates and deletes, committing each change as files', async () => {
     await start();
+    const input = sampleInput(kind);
 
     // create
     const created = await api<{ entity: { id: string; name: string }; commit: { hash: string } }>(
@@ -320,8 +327,9 @@ describe('files', () => {
 
   it('keeps layout separate: moving nodes only touches layout.json', async () => {
     await start();
-    const { body } = await api<{ entity: { id: string } }>('POST', '/api/projects', sampleProject);
-    const moved = { ...sampleProject, layout: { nodes: { in: { x: 500, y: 500 } } } };
+    const project = sampleInput('project');
+    const { body } = await api<{ entity: { id: string } }>('POST', '/api/projects', project);
+    const moved = { ...project, layout: { nodes: { in: { x: 500, y: 500 } } } };
     await api('PUT', `/api/projects/${body.entity.id}`, moved);
     const draft = `refs/heads/project/${body.entity.id}/draft`;
     expect(git('show', '--name-only', '--format=', draft).trim()).toBe(
@@ -340,7 +348,7 @@ describe('index', () => {
       tools: [{ kind: 'tool', id: tool.body.entity.id, version: 'v1' }],
     });
     for (const kind of ['pattern', 'template', 'project'] as const) {
-      await api('POST', `/api/${KIND_PLURALS[kind]}`, SAMPLE_INPUTS[kind]);
+      await api('POST', `/api/${KIND_PLURALS[kind]}`, sampleInput(kind));
     }
     return {
       skillId: skill.body.entity.id,
@@ -760,6 +768,55 @@ describe('versioning', () => {
     expect(git('branch', '--list', `agent/${id}/draft`).trim()).not.toBe('');
   });
 
+  it('creates a fork branch at a version and saves to it', async () => {
+    await start();
+    const id = await createAgent();
+    await edit(id, { name: 'Two' });
+    await api('POST', `/api/agents/${id}/merge`);
+
+    const fork = await api<{ status: VersionStatus }>('POST', `/api/agents/${id}/branches`, {
+      name: 'fork-proj-agent-1',
+      from: 'v1',
+    });
+    expect(fork.status).toBe(201);
+    expect(fork.body.status.branches).toMatchObject([{ name: 'fork-proj-agent-1', commits: 0 }]);
+    expect(git('rev-parse', `agent/${id}/fork-proj-agent-1`).trim()).toBe(
+      git('rev-parse', `agent/${id}/v1`).trim(),
+    );
+    expect(
+      (await api<{ name: string }>('GET', `/api/agents/${id}?ref=fork-proj-agent-1`)).body.name,
+    ).toBe('Planner');
+
+    const saved = await api<{ status: VersionStatus }>(
+      'PUT',
+      `/api/agents/${id}?branch=fork-proj-agent-1`,
+      { ...sampleAgent, skills: [], tools: [], name: 'Forked' },
+    );
+    expect(saved.status).toBe(200);
+    expect(
+      (await api<{ name: string }>('GET', `/api/agents/${id}?ref=fork-proj-agent-1`)).body.name,
+    ).toBe('Forked');
+    // main and the (absent) draft are untouched
+    expect((await api<{ name: string }>('GET', `/api/agents/${id}`)).body.name).toBe('Two');
+    expect(saved.body.status.branches.map((b) => b.name)).toEqual(['fork-proj-agent-1']);
+
+    const dup = await api('POST', `/api/agents/${id}/branches`, {
+      name: 'fork-proj-agent-1',
+      from: 'v2',
+    });
+    expect(dup.status).toBe(400);
+    expect(
+      (await api('POST', `/api/agents/${id}/branches`, { name: 'draft', from: 'v1' })).status,
+    ).toBe(400);
+    expect(
+      (await api('POST', `/api/agents/${id}/branches`, { name: 'x', from: 'v9' })).status,
+    ).toBe(404);
+    expect(
+      (await api('PUT', `/api/agents/${id}?branch=nope`, { ...sampleAgent, skills: [], tools: [] }))
+        .status,
+    ).toBe(404);
+  });
+
   it('includes versions in full lists', async () => {
     await start();
     const id = await createAgent();
@@ -769,5 +826,148 @@ describe('versioning', () => {
       '/api/agents?full=1',
     );
     expect(res.body.versions).toEqual({ [id]: { version: 'v1', hasDraft: true } });
+  });
+});
+
+describe('workspace', () => {
+  const check = (path: string) =>
+    api<WorkspaceCheck>('POST', '/api/workspace/check', { path }).then((r) => r.body);
+
+  it('checks folders', async () => {
+    await start();
+    expect(await check(workspace)).toEqual({ path: workspace, status: 'ok' });
+    expect(await check(`${workspace}/`)).toMatchObject({ path: workspace, status: 'ok' });
+    expect((await check('relative/path')).status).toBe('not-absolute');
+    expect((await check(join(home, 'missing'))).status).toBe('not-found');
+    writeFileSync(join(home, 'file.txt'), 'x');
+    expect((await check(join(home, 'file.txt'))).status).toBe('not-a-directory');
+    mkdirSync(join(home, 'plain'));
+    expect((await check(join(home, 'plain'))).status).toBe('not-a-repo');
+    mkdirSync(join(workspace, 'src'));
+    expect(await check(join(workspace, 'src'))).toMatchObject({
+      status: 'inside-repo',
+      repoRoot: workspace,
+    });
+    expect((await check(config.libraryDir)).status).toBe('is-library');
+    expect((await check(join(config.libraryDir, 'agents'))).status).toBe('is-library');
+    expect((await check(home)).status).toBe('is-library');
+  });
+
+  it('initializes a git repo only in a plain folder', async () => {
+    await start();
+    const plain = join(home, 'plain');
+    mkdirSync(plain);
+    const res = await api<WorkspaceCheck>('POST', '/api/workspace/init', { path: plain });
+    expect(res.body.status).toBe('ok');
+    expect(existsSync(join(plain, '.git'))).toBe(true);
+    // Never inside another repo or the library.
+    mkdirSync(join(workspace, 'sub'));
+    const inside = await api<WorkspaceCheck>('POST', '/api/workspace/init', {
+      path: join(workspace, 'sub'),
+    });
+    expect(inside.body.status).toBe('inside-repo');
+    expect(existsSync(join(workspace, 'sub', '.git'))).toBe(false);
+  });
+
+  it('suggests folders for a partly typed path', async () => {
+    await start();
+    mkdirSync(join(home, 'code-a'));
+    mkdirSync(join(home, 'code-b'));
+    mkdirSync(join(home, '.hidden'));
+    const res = await api<WorkspaceSuggestions>(
+      'GET',
+      `/api/workspace/suggest?path=${encodeURIComponent(join(home, 'co'))}`,
+    );
+    expect(res.body.items.map((i) => i.path)).toEqual([join(home, 'code-a'), join(home, 'code-b')]);
+    const children = await api<WorkspaceSuggestions>(
+      'GET',
+      `/api/workspace/suggest?path=${encodeURIComponent(`${home}/`)}`,
+    );
+    expect(children.body.items.find((i) => i.path === workspace)?.isGitRepo).toBe(true);
+    expect(children.body.items.some((i) => i.path.endsWith('.hidden'))).toBe(false);
+  });
+
+  it('checks where a new workspace folder would go', async () => {
+    await start();
+    const checkNew = (path: string) =>
+      api<WorkspaceCheck>('POST', '/api/workspace/check-new', { path }).then((r) => r.body);
+    expect(await checkNew(join(home, 'new', 'app'))).toEqual({
+      path: join(home, 'new', 'app'),
+      status: 'ok',
+    });
+    expect((await checkNew(workspace)).status).toBe('exists');
+    expect((await checkNew('relative')).status).toBe('not-absolute');
+    writeFileSync(join(home, 'file.txt'), 'x');
+    expect((await checkNew(join(home, 'file.txt', 'app'))).status).toBe('not-a-directory');
+    expect((await checkNew(join(config.libraryDir, 'agents', 'x'))).status).toBe('is-library');
+    expect(await checkNew(join(workspace, 'nested'))).toMatchObject({
+      status: 'ok',
+      warning: expect.stringContaining(workspace),
+    });
+  });
+
+  it('creates the workspace folder with a git repo together with the project', async () => {
+    await start();
+    const target = join(home, 'code', 'checkout');
+    const res = await api<{ entity: { workspacePath: string } }>(
+      'POST',
+      '/api/projects?createWorkspace=1',
+      { ...sampleInput('project'), workspacePath: target },
+    );
+    expect(res.status).toBe(201);
+    expect(res.body.entity.workspacePath).toBe(target);
+    expect(existsSync(join(target, '.git'))).toBe(true);
+
+    // The folder exists now, so the same request is refused.
+    const again = await api<{ issues: { path: string[] }[] }>(
+      'POST',
+      '/api/projects?createWorkspace=1',
+      { ...sampleInput('project'), workspacePath: target },
+    );
+    expect(again.status).toBe(400);
+    expect(again.body.issues).toMatchObject([{ path: ['workspacePath'] }]);
+
+    // An invalid project creates no folder.
+    const other = join(home, 'code', 'never');
+    const invalid = await api('POST', '/api/projects?createWorkspace=1', {
+      ...sampleInput('project'),
+      name: '',
+      workspacePath: other,
+    });
+    expect(invalid.status).toBe(400);
+    expect(existsSync(other)).toBe(false);
+  });
+
+  it('requires projects to point at a git repo, checked on create and on path changes', async () => {
+    await start();
+    const project = sampleInput('project');
+    const bad = await api<{ error: string; issues: { path: string[]; message: string }[] }>(
+      'POST',
+      '/api/projects',
+      { ...project, workspacePath: join(home, 'missing') },
+    );
+    expect(bad.status).toBe(400);
+    expect(bad.body.issues).toMatchObject([{ path: ['workspacePath'] }]);
+
+    const created = await api<{ entity: { id: string; workspacePath: string } }>(
+      'POST',
+      '/api/projects',
+      project,
+    );
+    expect(created.status).toBe(201);
+    const id = created.body.entity.id;
+
+    // Changing the path to a non-repo is refused.
+    mkdirSync(join(home, 'plain'));
+    const moved = await api('PUT', `/api/projects/${id}`, {
+      ...project,
+      workspacePath: join(home, 'plain'),
+    });
+    expect(moved.status).toBe(400);
+
+    // A workspace that disappeared later does not block saving other changes.
+    rmSync(workspace, { recursive: true, force: true });
+    const renamed = await api('PUT', `/api/projects/${id}`, { ...project, name: 'Renamed' });
+    expect(renamed.status).toBe(200);
   });
 });

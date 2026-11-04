@@ -353,6 +353,12 @@ export class LibraryStore {
     return entity;
   }
 
+  /** The last saved state: the draft if there is one, otherwise main. */
+  async getLatest<K extends EntityKind>(kind: K, id: string): Promise<EntityByKind[K]> {
+    const hasDraft = await this.git.revParse(entityRefs(kind, id).branch(DRAFT_BRANCH));
+    return this.get(kind, id, hasDraft ? DRAFT_BRANCH : undefined);
+  }
+
   references(kind: EntityKind, id: string): ReferencesResponse {
     return { outgoing: this.index.outgoing(kind, id), incoming: this.index.incoming(kind, id) };
   }
@@ -509,17 +515,25 @@ export class LibraryStore {
     kind: K,
     id: string,
     input: unknown,
+    opts: { branch?: string } = {},
   ): Promise<{ entity: EntityByKind[K]; commit: CommitInfo | null; status: VersionStatus }> {
+    const branch = opts.branch ?? DRAFT_BRANCH;
     return this.git.exclusive(async () => {
       if (!(await this.exists(kind, id))) throw new NotFoundError(kind, id);
       const entity = this.validate(kind, id, input);
-      const ref = entityRefs(kind, id).branch(DRAFT_BRANCH);
-      const draftHead = await this.git.revParse(ref);
-      const base = draftHead ?? (await this.git.head(MAIN_REF));
+      const ref = entityRefs(kind, id).branch(branch);
+      const branchHead = BranchName.safeParse(branch).success
+        ? await this.git.revParse(ref)
+        : undefined;
+      // Only the draft is created on demand; other branches (forks) must exist already.
+      if (!branchHead && branch !== DRAFT_BRANCH) {
+        throw new NotFoundError(kind, id, `branch "${branch}"`);
+      }
+      const base = branchHead ?? (await this.git.head(MAIN_REF));
       const commit = await this.commitOn({
         ref,
         base,
-        createRef: !draftHead,
+        createRef: !branchHead,
         ops: this.writeOps(kind, entity),
         message: `Update ${describe(kind, entity)}`,
       });
@@ -599,6 +613,35 @@ export class LibraryStore {
       );
       this.index.upsert(this.entryOf(kind, entity), commit.hash);
       return { entity, commit, version, status: await this.statusOf(kind, id) };
+    });
+  }
+
+  /**
+   * Create a named branch (e.g. a fork pinned by a project) at a main version. Fails when the
+   * branch exists already.
+   */
+  async createBranch(
+    kind: EntityKind,
+    id: string,
+    branch: string,
+    from: string,
+  ): Promise<VersionStatus> {
+    return this.git.exclusive(async () => {
+      if (!(await this.exists(kind, id))) throw new NotFoundError(kind, id);
+      if (!BranchName.safeParse(branch).success || branch === DRAFT_BRANCH) {
+        throw new BadRequestError(`"${branch}" is not a valid branch name`);
+      }
+      if (versionNumber(from) === undefined) {
+        throw new BadRequestError('a branch starts from a main version, e.g. "v2"');
+      }
+      const refs = entityRefs(kind, id);
+      const start = await this.git.revParse(`${refs.tag(from)}^{commit}`);
+      if (!start) throw new NotFoundError(kind, id, `version "${from}"`);
+      if (await this.git.revParse(refs.branch(branch))) {
+        throw new BadRequestError(`branch "${branch}" already exists`);
+      }
+      await this.git.updateRefs([{ op: 'create', ref: refs.branch(branch), value: start }]);
+      return this.statusOf(kind, id);
     });
   }
 

@@ -108,3 +108,37 @@ export interface ApiErrorBody {
   message: string;
   issues?: { path: (string | number)[]; message: string }[];
 }
+
+/**
+ * Result of checking a workspace folder (`POST /api/workspace/check`).
+ * - `ok`: an existing folder that is the root of a git repo
+ * - `inside-repo`: a folder inside a git repo; `repoRoot` is the repo's root
+ * - `not-a-repo`: an existing folder that is not in a git repo (`git init` can be offered)
+ */
+export type WorkspaceStatus =
+  | 'ok'
+  | 'not-absolute'
+  | 'not-found'
+  | 'not-a-directory'
+  | 'not-a-repo'
+  | 'inside-repo'
+  | 'is-library'
+  /** For a new folder: something already exists at the path. */
+  | 'exists';
+
+export interface WorkspaceCheck {
+  /** The path as checked: `~` expanded, normalized, no trailing slash. */
+  path: string;
+  status: WorkspaceStatus;
+  /** Root of the enclosing repo for `inside-repo`. */
+  repoRoot?: string;
+  /** Explanation for anything but `ok`. */
+  message?: string;
+  /** Something worth knowing even when `ok`, e.g. a new repo nested inside another one. */
+  warning?: string;
+}
+
+/** `GET /api/workspace/suggest?path=`: folders matching a partly typed path. */
+export interface WorkspaceSuggestions {
+  items: { path: string; isGitRepo: boolean }[];
+}

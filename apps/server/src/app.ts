@@ -1,11 +1,15 @@
 import {
   kindFromPlural,
+  safeParseEntity,
   type ApiErrorBody,
   type DiffResponse,
   type DiscardBranchResponse,
   type HistoryResponse,
+  type CreateBranchRequest,
   type MergeRequest,
   type VersionStatus,
+  type WorkspaceCheck,
+  type WorkspaceSuggestions,
   type EntityKind,
   type HealthResponse,
   type RebuildResponse,
@@ -16,6 +20,14 @@ import {
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import type { AppConfig } from './config.js';
 import { checkGitInstalled } from './git.js';
+import {
+  checkNewWorkspace,
+  checkWorkspace,
+  createWorkspace,
+  expandPath,
+  initWorkspace,
+  suggestWorkspaces,
+} from './workspace.js';
 import {
   BadRequestError,
   EntityValidationError,
@@ -31,6 +43,16 @@ export interface BuiltApp {
 }
 
 class UnknownKindError extends Error {}
+
+/** A 400 with field issues that do not come from a Zod schema (e.g. workspace checks). */
+class FieldError extends Error {
+  constructor(
+    message: string,
+    readonly issues: { path: (string | number)[]; message: string }[],
+  ) {
+    super(message);
+  }
+}
 
 function kindParam(plural: string): EntityKind {
   const kind = kindFromPlural(plural);
@@ -58,6 +80,9 @@ export async function buildApp(
     if (err instanceof ReferencedError) {
       status = 409;
       body = { error: 'conflict', message: err.message, references: err.references };
+    } else if (err instanceof FieldError) {
+      status = 400;
+      body = { error: 'validation', message: err.message, issues: err.issues };
     } else if (err instanceof MergeConflictError) {
       status = 409;
       body = { error: 'merge_conflict', message: err.message };
@@ -106,6 +131,48 @@ export async function buildApp(
     store.updateSettings(req.body),
   );
 
+  app.post<{ Body: { path?: unknown } | undefined }>(
+    '/api/workspace/check',
+    async (req): Promise<WorkspaceCheck> =>
+      checkWorkspace(String(req.body?.path ?? ''), config.libraryDir),
+  );
+
+  app.post<{ Body: { path?: unknown } | undefined }>(
+    '/api/workspace/init',
+    async (req): Promise<WorkspaceCheck> =>
+      initWorkspace(String(req.body?.path ?? ''), config.libraryDir),
+  );
+
+  app.post<{ Body: { path?: unknown } | undefined }>(
+    '/api/workspace/check-new',
+    async (req): Promise<WorkspaceCheck> =>
+      checkNewWorkspace(String(req.body?.path ?? ''), config.libraryDir),
+  );
+
+  app.get<{ Querystring: { path?: string } }>(
+    '/api/workspace/suggest',
+    async (req): Promise<WorkspaceSuggestions> => suggestWorkspaces(req.query.path ?? ''),
+  );
+
+  /**
+   * Projects: the workspace must be the root of a git repo. Checked when a project is created
+   * and whenever its path changes, not on every save (a moved folder must not block saving).
+   */
+  async function prepareProject(body: unknown, previousPath?: string): Promise<unknown> {
+    if (!body || typeof body !== 'object') return body;
+    const raw = (body as { workspacePath?: unknown }).workspacePath;
+    if (typeof raw !== 'string' || raw.trim() === '') return body;
+    const expanded = expandPath(raw);
+    if (expanded === previousPath) return { ...body, workspacePath: expanded };
+    const check = await checkWorkspace(raw, config.libraryDir);
+    if (check.status !== 'ok') {
+      throw new FieldError('invalid workspace', [
+        { path: ['workspacePath'], message: check.message ?? 'invalid workspace' },
+      ]);
+    }
+    return { ...body, workspacePath: check.path };
+  }
+
   app.get<{ Params: { kinds: string }; Querystring: { q?: string; full?: string } }>(
     '/api/:kinds',
     async (req) => {
@@ -115,10 +182,46 @@ export async function buildApp(
     },
   );
 
-  app.post<{ Params: { kinds: string }; Body: unknown }>('/api/:kinds', async (req, reply) => {
-    const result = await store.create(kindParam(req.params.kinds), req.body);
-    return reply.status(201).send(result);
-  });
+  /**
+   * Projects only: `?createWorkspace=1` creates the workspace folder and runs `git init` there,
+   * after the project itself was validated (so a rejected project leaves no folder behind).
+   */
+  async function createProjectWorkspace(body: unknown): Promise<unknown> {
+    const input = body && typeof body === 'object' ? body : {};
+    const raw = (input as { workspacePath?: unknown }).workspacePath;
+    const check = await checkNewWorkspace(typeof raw === 'string' ? raw : '', config.libraryDir);
+    if (check.status !== 'ok') {
+      throw new FieldError('invalid workspace', [
+        { path: ['workspacePath'], message: check.message ?? 'invalid workspace' },
+      ]);
+    }
+    const prepared = { ...input, workspacePath: check.path };
+    const valid = safeParseEntity('project', { ...prepared, id: 'project-aaaaaa' });
+    if (!valid.success) throw new EntityValidationError('invalid project', valid.error);
+    const created = await createWorkspace(check.path, config.libraryDir);
+    if (created.status !== 'ok') {
+      throw new FieldError('invalid workspace', [
+        { path: ['workspacePath'], message: created.message ?? 'could not create the folder' },
+      ]);
+    }
+    return prepared;
+  }
+
+  app.post<{ Params: { kinds: string }; Body: unknown; Querystring: { createWorkspace?: string } }>(
+    '/api/:kinds',
+    async (req, reply) => {
+      const kind = kindParam(req.params.kinds);
+      let body = req.body;
+      if (kind === 'project') {
+        body =
+          req.query.createWorkspace === '1'
+            ? await createProjectWorkspace(body)
+            : await prepareProject(body);
+      }
+      const result = await store.create(kind, body);
+      return reply.status(201).send(result);
+    },
+  );
 
   /** `?ref=` main (default), a version (`v2`), a branch (`draft`) or a commit hash. */
   app.get<{ Params: { kinds: string; id: string }; Querystring: { ref?: string } }>(
@@ -126,10 +229,20 @@ export async function buildApp(
     async (req) => store.get(kindParam(req.params.kinds), req.params.id, req.query.ref),
   );
 
-  app.put<{ Params: { kinds: string; id: string }; Body: unknown }>(
-    '/api/:kinds/:id',
-    async (req) => store.update(kindParam(req.params.kinds), req.params.id, req.body),
-  );
+  /** Saves to the draft branch, or to `?branch=` (an existing branch such as a fork). */
+  app.put<{
+    Params: { kinds: string; id: string };
+    Body: unknown;
+    Querystring: { branch?: string };
+  }>('/api/:kinds/:id', async (req) => {
+    const kind = kindParam(req.params.kinds);
+    let body = req.body;
+    if (kind === 'project') {
+      const previous = await store.getLatest('project', req.params.id);
+      body = await prepareProject(body, previous.workspacePath);
+    }
+    return store.update(kind, req.params.id, body, { branch: req.query.branch });
+  });
 
   app.delete<{ Params: { kinds: string; id: string } }>('/api/:kinds/:id', async (req) =>
     store.delete(kindParam(req.params.kinds), req.params.id),
@@ -167,6 +280,23 @@ export async function buildApp(
         force: body.force === true,
         note: body.note,
       });
+    },
+  );
+
+  app.post<{ Params: { kinds: string; id: string }; Body: CreateBranchRequest | undefined }>(
+    '/api/:kinds/:id/branches',
+    async (req, reply) => {
+      const { name, from } = req.body ?? {};
+      if (typeof name !== 'string' || typeof from !== 'string') {
+        throw new BadRequestError('"name" and "from" are required');
+      }
+      const status = await store.createBranch(
+        kindParam(req.params.kinds),
+        req.params.id,
+        name,
+        from,
+      );
+      return reply.status(201).send({ status } satisfies DiscardBranchResponse);
     },
   );
 

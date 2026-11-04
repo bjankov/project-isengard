@@ -5,7 +5,7 @@ import {
   type Settings,
 } from '@app/schema';
 import { Bot, ShieldAlert, Sparkles } from 'lucide-react';
-import { Link, useParams } from 'react-router';
+import { Link, useParams, useSearchParams } from 'react-router';
 import { AgentDefaultsFields, modelLabel } from '@/components/agent-defaults';
 import { CodeEditor } from '@/components/code-editor';
 import { EditorHeader } from '@/components/editor-header';
@@ -113,30 +113,46 @@ export function AgentsIndex() {
 
 export function AgentEditorRoute() {
   const { id } = useParams();
+  const [params] = useSearchParams();
+  const branch = params.get('branch') ?? undefined;
   const settings = useSettings();
-  const source = useEditorSource('agent', id, (): EntityInput<'agent'> | undefined =>
-    settings
-      ? {
-          name: '',
-          description: '',
-          prompt: '',
-          skills: [],
-          tools: [],
-          defaults: settings.agentDefaults,
-        }
-      : undefined,
+  const source = useEditorSource(
+    'agent',
+    id,
+    (): EntityInput<'agent'> | undefined =>
+      settings
+        ? {
+            name: '',
+            description: '',
+            prompt: '',
+            skills: [],
+            tools: [],
+            defaults: settings.agentDefaults,
+          }
+        : undefined,
+    branch,
   );
   if (source.state === 'notFound') return <NotFound what="agent" backHref="/agents" />;
   if (source.state === 'loading' || !settings) return null;
-  return <AgentEditor key={id ?? 'new'} source={source} settings={settings} />;
+  return (
+    <AgentEditor
+      key={`${id ?? 'new'}@${branch ?? ''}`}
+      source={source}
+      settings={settings}
+      back={params.get('back') ?? undefined}
+    />
+  );
 }
 
 function AgentEditor({
   source,
   settings,
+  back,
 }: {
   source: EditorSourceReady<'agent'>;
   settings: Settings;
+  /** Where to return to, e.g. the project whose fork is being edited. */
+  back?: string;
 }) {
   const editor = useEntityEditor('agent', source);
   const skills = useEntities('skill');
@@ -160,16 +176,31 @@ function AgentEditor({
     <>
       <UnsavedChangesGuard dirty={editor.dirty} />
       <EditorHeader
-        eyebrow={editor.isNew ? 'New agent' : 'Agent'}
+        eyebrow={
+          editor.isNew ? 'New agent' : source.branch !== 'draft' ? 'Agent · project fork' : 'Agent'
+        }
         title={editor.saved?.name ?? (draft.name || 'Untitled agent')}
         dirty={editor.dirty}
         saving={editor.saving}
         onSave={() => void editor.save()}
-        onDelete={editor.saved ? editor.remove : undefined}
+        onDelete={editor.saved && source.branch === 'draft' ? editor.remove : undefined}
         versioning={editor.versioning}
       >
         {hasUnrestricted && <UnrestrictedShellBadge />}
       </EditorHeader>
+      {back && back.startsWith('/') && (
+        <div className="border-b bg-violet-50 px-8 py-2 text-sm">
+          <Link
+            to={back}
+            className="font-medium text-violet-800 underline-offset-4 hover:underline"
+          >
+            ← Back to the project
+          </Link>
+          <span className="ml-2 text-muted-foreground">
+            Changes here affect only the project node that pins this fork.
+          </span>
+        </div>
+      )}
       <EditorBody>
         <Section title="Identity">
           <Field label="Name" htmlFor="agent-name" error={errors.name}>

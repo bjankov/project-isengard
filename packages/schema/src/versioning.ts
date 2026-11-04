@@ -132,3 +132,23 @@ export function normalizeMergeNote(note: string | undefined): string | undefined
   const line = (note ?? '').replace(/\s+/g, ' ').trim();
   return line === '' ? undefined : line;
 }
+
+/**
+ * Body of `POST /api/<kind>/<id>/branches`: create a named branch at a main version. Used for
+ * forks: a project instance that customizes an agent pins such a branch.
+ */
+export interface CreateBranchRequest {
+  name: string;
+  /** Main version to start from, e.g. `v2`. */
+  from: string;
+}
+
+/** Branch name of a fork pinned by a project node, e.g. `fork-demo-a1b2c3-agent-x7k2`. */
+export function forkBranchName(projectId: string, nodeId: string): string {
+  return `fork-${projectId}-${nodeId}`.slice(0, 100);
+}
+
+/** Whether a pinned version is a branch (a fork) rather than a main version. */
+export function isBranchVersion(version: string): boolean {
+  return versionNumber(version) === undefined;
+}

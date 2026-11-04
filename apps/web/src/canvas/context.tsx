@@ -1,0 +1,19 @@
+import type { AgentOverride, LoopAnalysis, Settings, ToolPreset, WorkflowGraph } from '@app/schema';
+import { createContext, useContext } from 'react';
+
+/** Data the canvas nodes and edges need besides their own content. */
+export interface CanvasContextValue {
+  graph: WorkflowGraph;
+  overrides: Record<string, AgentOverride>;
+  loops: LoopAnalysis;
+  settings: Settings | undefined;
+  tools: ToolPreset[] | undefined;
+}
+
+export const CanvasContext = createContext<CanvasContextValue | null>(null);
+
+export function useCanvasContext(): CanvasContextValue {
+  const value = useContext(CanvasContext);
+  if (!value) throw new Error('CanvasContext missing');
+  return value;
+}
