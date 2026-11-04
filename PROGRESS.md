@@ -95,3 +95,43 @@ How to try it:
 Tests: 65 unit/API tests; 5 e2e tests (2 new, for advanced fields, raw editing and invalid YAML).
 
 Deviations from PLAN.md: none.
+
+## M2: Versioning (2026-11-04)
+Status: done
+
+Built:
+- **Versions as git tags** `<kind>/<id>/v<n>`. Creating an entity makes `v1` on `main`. Entities from before M2 (and files added by hand) are tagged `v1` on startup.
+- **Drafts:** every save in the Skills, Tools and Agents editors commits to the entity's `draft` branch. `main` and the library folder stay unchanged until you merge. Reopening an entity opens its draft.
+- **Merge as vN:**
+  - publishes the draft to `main` as a merge commit with the next version tag, and closes the draft
+  - only that entity changes
+  - if `main`'s copy changed since the draft started (only possible through edits outside the app), a dialog shows `main` against the draft and offers **Merge anyway**
+- **Discard draft:** goes back to the current version.
+- **Branch indicator in every editor header:** the version (`v3`) plus `main`, `new draft` (unsaved changes, no draft yet) or `draft · N saves`.
+- **History panel:** versions on `main` and unmerged draft saves. Pick any two (or click an entry to compare it with the one below it) for a side-by-side Monaco diff of the stored files.
+- **Lists:** a `draft` badge marks entities with unmerged changes. In the agent editor, each skill and tool shows the version it pins. New references pin the current version, not `v1`.
+- **API:**
+  - `GET /api/<kind>/<id>?ref=` (main, `v2`, `draft` or a commit)
+  - `GET …/versions`, `GET …/history`, `GET …/diff?from=&to=`
+  - `POST …/merge`, `DELETE …/branches/<branch>`
+  - list responses include each entity's version and draft flag
+- **Git plumbing for every write** (temporary index, `commit-tree`, atomic `update-ref`), so the working tree is never switched. Recorded in DECISIONS.md.
+
+How to try it:
+1. `pnpm dev`, then open **Agents** and create an agent. The header shows `v1 · main`.
+2. Change its description. The indicator says `new draft`. Save: it now says `draft · 1 save`, and the list shows a `draft` badge. `git -C ~/.app/library log --oneline --graph --all` shows `main` unchanged and the commit on `agent/<id>/draft`.
+3. Click **Merge as v2**. The header shows `v2 · main` and `git -C ~/.app/library tag` lists `agent/<id>/v2`.
+4. Click the clock button: the history shows v2 and v1, with the diff. Edit and save again, then compare the draft with v2, or pick any two entries in the Compare boxes.
+5. **Discard draft** reverts the editor to v2.
+6. Add a skill to an agent: its card shows the pinned version (the skill's current one).
+7. `pnpm check` (78 unit/API tests) and `pnpm test:e2e` (8 browser tests, 3 new for M2).
+
+Deviations from PLAN.md:
+- **Opening for edit does not create the draft branch; the first Save does.** PLAN.md 8.1 says "opening an entity for edit creates or reuses a draft branch". Creating it on Save avoids empty branches for entities that are only viewed. Agreed at planning.
+- **New entities go straight to `main` as `v1`.** Only edits go through a draft. Agreed at planning.
+
+Open issues / questions:
+- **References that exist only on a draft don't block deleting their target.** Deletion is checked against `main`. If an agent's draft adds a skill and that skill is deleted before the merge, the merged agent points at a deleted skill. M6 (deletion with references) is the natural place to handle this.
+- **Projects (M3) and versioning:** all kinds, including projects, currently save to a draft. M3 should decide whether canvas autosave commits to the draft on every change.
+- **Version descriptions are generic** ("Created", "Merged from the draft"). There is no per-version note or changelog. Say if you want a short message when merging.
+- **Discarded draft commits** stay in the git object store until `git gc` removes them. Nothing in the app shows them again.
