@@ -347,7 +347,7 @@ Every entity editor shows the version and branch state, plus access to history a
 - Add nodes from a palette and from a quick-add command palette (`Cmd/Ctrl+K`).
 - Drag to connect; invalid connections are prevented with an explanation (e.g. a Note cannot be connected).
 - **Inspector side panel** for the selected node or edge. It shows all configuration from section 7, including context mode and its settings for edges, and overrides for agent nodes (clearly separated from fields that would fork).
-- Undo/redo, multi-select, copy/paste, minimap, zoom-to-fit, autosave of the draft branch.
+- Undo/redo, multi-select, copy/paste, minimap, zoom-to-fit. Saving is explicit (Save / Ctrl+S, commits to the draft branch) with an unsaved-changes guard, like every other editor. Autosave is deferred to v2.
 - Distinct visual language:
   - Decision nodes as diamonds.
   - Back-edges curved with an iteration-cap badge.

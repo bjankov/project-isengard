@@ -162,3 +162,4 @@ Format: date, milestone, decision, reason.
   - It is stored as the body of the merge commit, so it lives in git with no extra file.
   - The history shows it under the version instead of the generic "Merged from the draft".
   - M6 update notifications can list the notes between two versions as a changelog.
+- **No canvas autosave in v1 (PLAN.md 9.3 updated).** The canvas saves explicitly (Save / Ctrl+S, to the draft branch) with the unsaved-changes guard, like every other editor. Reason: user decision. It keeps editors consistent and git history clean, and saving is already safe because `main` only changes on merge. Autosave is in `V2_BACKLOG.md`.
