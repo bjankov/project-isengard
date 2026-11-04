@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -238,6 +238,31 @@ describe('files', () => {
     expect(text).toBe(
       '---\nname: write-unit-tests\ndescription: Write focused unit tests for changed code.\n---\n\n' +
         sampleSkill.body,
+    );
+  });
+
+  it('preserves advanced and unknown frontmatter of hand-written skills when editing', async () => {
+    await start();
+    const id = 'pdf-tools-aaaaaa';
+    mkdirSync(join(config.libraryDir, 'skills', id), { recursive: true });
+    writeFileSync(
+      join(config.libraryDir, 'skills', id, 'SKILL.md'),
+      '---\nname: pdf-tools\ndescription: PDFs\nlicense: MIT\nmetadata:\n  version: 2\nx-team: docs\n---\nBody\n',
+    );
+    git('add', '-A');
+    git('commit', '-qm', 'hand-written skill');
+    await api('POST', '/api/index/rebuild');
+
+    const { body: skill } = await api<Record<string, unknown>>('GET', `/api/skills/${id}`);
+    expect(skill).toMatchObject({
+      license: 'MIT',
+      metadata: { version: '2' },
+      extraFrontmatter: { 'x-team': 'docs' },
+    });
+    const { id: _id, ...input } = skill;
+    await api('PUT', `/api/skills/${id}`, { ...input, description: 'PDF tools' });
+    expect(readFileSync(join(config.libraryDir, 'skills', id, 'SKILL.md'), 'utf8')).toBe(
+      '---\nname: pdf-tools\ndescription: PDF tools\nlicense: MIT\nmetadata:\n  version: "2"\nx-team: docs\n---\n\nBody\n',
     );
   });
 

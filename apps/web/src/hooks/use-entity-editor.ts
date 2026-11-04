@@ -13,6 +13,7 @@ import { SKIP_GUARD } from '@/components/unsaved-changes-guard';
 import { ApiError, api } from '@/lib/api';
 import { issuesToErrors, type FieldErrors } from '@/lib/validation';
 import { useEntities, useLibrary } from '@/stores/library';
+import { sameData } from '@/lib/same';
 
 /** Valid id used only to validate drafts that have no id yet. */
 const DRAFT_ID = 'draft-aaaaaa';
@@ -22,7 +23,7 @@ function withoutId<K extends EntityKind>(entity: EntityByKind[K]): EntityInput<K
   return rest as unknown as EntityInput<K>;
 }
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+const same = sameData;
 
 export type EditorSource<K extends EntityKind> =
   | { state: 'loading' }

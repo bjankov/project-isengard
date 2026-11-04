@@ -19,8 +19,12 @@ async function typeInMonaco(page: Page, label: string, text: string) {
 }
 
 async function save(page: Page, name: string) {
+  const response = page.waitForResponse(
+    (r) => r.url().includes('/api/') && ['POST', 'PUT'].includes(r.request().method()),
+  );
   await page.getByRole('button', { name: 'Save' }).click();
-  await expect(page.getByText(`Saved “${name}”`)).toBeVisible();
+  expect((await response).ok()).toBe(true);
+  await expect(page.getByText(`Saved “${name}”`).first()).toBeVisible();
 }
 
 test('create a skill, a scoped preset and an agent using both, entirely in the UI', async ({
@@ -170,4 +174,87 @@ test('settings: edit the model list and agent defaults', async ({ page }) => {
   // New agents start from the new defaults
   await page.goto('/agents/new');
   await expect(page.getByRole('combobox').first()).toContainText('Llama 4 70B');
+});
+
+test('skills: advanced frontmatter via the form and via raw SKILL.md', async ({ page }) => {
+  await page.goto('/skills/new');
+  // Hidden until asked for
+  await expect(page.getByLabel('License', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Advanced' }).click();
+
+  await page.getByLabel('Name', { exact: true }).fill('pdf-tools');
+  await page.getByLabel('Description', { exact: true }).fill('Extract text from PDFs.');
+  await page.getByLabel('License', { exact: true }).fill('Apache-2.0');
+  await page.getByLabel('Compatibility', { exact: true }).fill('Needs poppler-utils');
+  await page.getByRole('button', { name: 'Add entry' }).click();
+  await page.getByLabel('Metadata key 1', { exact: true }).fill('author');
+  await page.getByLabel('Metadata value 1', { exact: true }).fill('docs-team');
+  await page.getByLabel('Add allowed tool', { exact: true }).fill('Bash(pdftotext:*) Read');
+  await page.getByLabel('Add allowed tool', { exact: true }).press('Enter');
+  await typeInMonaco(page, 'Other frontmatter fields (YAML)', 'x-team: docs');
+  await shot(page, '10-skill-advanced');
+  await save(page, 'pdf-tools');
+  const skillId = page.url().split('/').pop()!;
+
+  const saved = await (await page.request.get(`/api/skills/${skillId}`)).json();
+  expect(saved).toMatchObject({
+    license: 'Apache-2.0',
+    compatibility: 'Needs poppler-utils',
+    metadata: { author: 'docs-team' },
+    allowedTools: ['Bash(pdftotext:*)', 'Read'],
+    extraFrontmatter: { 'x-team': 'docs' },
+  });
+
+  // Raw SKILL.md shows the same data, in the standard format
+  await page.getByRole('radio', { name: 'SKILL.md' }).click();
+  const raw = page.locator('.monaco-editor', { has: page.getByLabel('SKILL.md', { exact: true }) });
+  await expect(raw.getByText('allowed-tools: Bash(pdftotext:*) Read')).toBeVisible();
+  await shot(page, '11-skill-raw');
+
+  // Invalid YAML is reported and blocks switching back
+  await raw.locator('.view-lines').click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.type('---\nname: a: b\n---\n');
+  await expect(page.getByText(/not valid YAML/)).toBeVisible();
+
+  // Replace the file with a flat one and go back to the form
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.type(
+    '---\nname: pdf-tools\ndescription: PDFs only\ncompatibility: Needs network\n---\nBody',
+  );
+  await page.getByRole('radio', { name: 'Form' }).click();
+  await expect(page.getByLabel('Description', { exact: true })).toHaveValue('PDFs only');
+  await expect(page.getByLabel('Compatibility', { exact: true })).toHaveValue('Needs network');
+  await expect(page.getByLabel('License', { exact: true })).toHaveValue('');
+  await save(page, 'pdf-tools');
+
+  const edited = await (await page.request.get(`/api/skills/${skillId}`)).json();
+  expect(edited).toMatchObject({
+    description: 'PDFs only',
+    compatibility: 'Needs network',
+    body: 'Body',
+  });
+  expect(edited.license).toBeUndefined();
+  expect(edited.extraFrontmatter).toBeUndefined();
+
+  // Hiding advanced shows how many advanced fields are set; the choice is remembered
+  await page.getByRole('button', { name: 'Hide advanced' }).click();
+  await expect(page.getByLabel('Compatibility', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Advanced\s*1/ })).toBeVisible();
+  await page.getByRole('button', { name: /Advanced/ }).click();
+  await page.reload();
+  await expect(page.getByLabel('Compatibility', { exact: true })).toBeVisible();
+});
+
+test('skills: invalid other-fields YAML blocks saving', async ({ page }) => {
+  await page.goto('/skills/new');
+  const toggle = page.getByRole('button', { name: /Advanced/ });
+  if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click();
+  await page.getByLabel('Name', { exact: true }).fill('broken-yaml');
+  await page.getByLabel('Description', { exact: true }).fill('x');
+  await typeInMonaco(page, 'Other frontmatter fields (YAML)', 'x: a: b');
+  await expect(page.getByText(/Other fields is not valid YAML/)).toBeVisible();
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Fix the YAML before saving')).toBeVisible();
+  expect(page.url()).toMatch(/\/skills\/new$/);
 });

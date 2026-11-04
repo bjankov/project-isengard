@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 export interface CodeEditorProps {
   value: string;
   onChange: (value: string) => void;
-  language: 'markdown' | 'python';
+  language: 'markdown' | 'python' | 'yaml';
   height?: number;
   placeholder?: string;
   ariaLabel?: string;

@@ -157,6 +157,15 @@ export function NotFound({ what, backHref }: { what: string; backHref: string })
   );
 }
 
-export function EditorBody({ children }: { children: React.ReactNode }) {
-  return <div className="mx-auto max-w-4xl space-y-10 px-8 py-8">{children}</div>;
+export function EditorBody({ children, wide }: { children: React.ReactNode; wide?: boolean }) {
+  return (
+    <div
+      className={cn(
+        'mx-auto space-y-10 px-8 py-8 transition-[max-width] duration-300 ease-out',
+        wide ? 'max-w-7xl' : 'max-w-4xl',
+      )}
+    >
+      {children}
+    </div>
+  );
 }

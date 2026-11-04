@@ -25,6 +25,8 @@ interface EditorHeaderProps {
   /** Omit for entities that cannot be deleted (e.g. not saved yet). */
   onDelete?: () => Promise<ReferencedErrorBody['references'] | undefined>;
   children?: React.ReactNode;
+  /** Extra controls shown before Delete/Save. */
+  actions?: React.ReactNode;
 }
 
 const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
@@ -37,6 +39,7 @@ export function EditorHeader({
   onSave,
   onDelete,
   children,
+  actions,
 }: EditorHeaderProps) {
   const [confirming, setConfirming] = useState(false);
   const [blockedBy, setBlockedBy] = useState<ReferencedErrorBody['references']>([]);
@@ -68,6 +71,7 @@ export function EditorHeader({
           {children}
         </div>
       </div>
+      {actions}
       {onDelete && (
         <Button variant="ghost" size="sm" onClick={() => setConfirming(true)}>
           <Trash2 />

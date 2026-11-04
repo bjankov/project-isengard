@@ -77,8 +77,21 @@ Deviations from PLAN.md:
 - **Deleting a referenced entity is blocked** for now. PLAN.md 8.4 says it should be allowed with confirmation, converting references to local copies; that is M6. Agreed at planning.
 
 Open issues / questions:
-- **Main JS bundle** is about 685 kB, with Monaco lazy-loaded at about 2.7 MB. That's fine for a local app; code-splitting can wait for M7 polish.
-- **Extra `SKILL.md` frontmatter fields** (e.g. `license`) are still dropped on save.
-- **Ordering:** skills and tools on an agent keep the order they were added in; there is no drag-to-reorder.
 - **Testing approach:** UI behavior is covered by the e2e tests, not component unit tests.
 - **E2E prerequisite:** the e2e tests need Google Chrome installed.
+
+### M1 follow-up (2026-11-04)
+Built:
+- **Skill editor, Advanced button:** reveals license, compatibility, metadata, allowed-tools and other fields (YAML) in a wider layout. It shows a count when such fields are set while hidden.
+- **Form | SKILL.md switch:** edit the raw file; the form and the file stay in sync.
+- **Preservation:** existing advanced and unknown frontmatter in hand-written skills is kept on save.
+- **`V2_BACKLOG.md`:** lists everything deferred to v2.
+
+How to try it:
+1. Open a skill and click **Advanced**. Set a license, metadata and allowed tools, then Save.
+2. Switch to **SKILL.md** to see and edit the file. Switch back to **Form**.
+3. `git -C ~/.app/library show HEAD` shows the written file.
+
+Tests: 65 unit/API tests; 5 e2e tests (2 new, for advanced fields, raw editing and invalid YAML).
+
+Deviations from PLAN.md: none.
