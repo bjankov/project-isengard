@@ -85,9 +85,9 @@ test('create a skill, a scoped preset and an agent using both, entirely in the U
   await page.getByRole('button', { name: 'Add skill' }).click();
   await page.getByRole('option', { name: /write-unit-tests/ }).click();
   await page.getByRole('button', { name: 'Add tool' }).click();
-  await page.getByRole('option', { name: /Run tests/ }).click();
+  await page.getByRole('option', { name: /^Run tests shell/ }).click();
   await page.getByRole('button', { name: 'Add tool' }).click();
-  await page.getByRole('option', { name: /Read src/ }).click();
+  await page.getByRole('option', { name: /^Read src read/ }).click();
   await page.getByRole('radio', { name: 'high' }).click();
   await page.getByLabel('Max iterations', { exact: true }).fill('8');
   await shot(page, '05-agent-editor');

@@ -35,6 +35,14 @@ offers `git init` if needed). The canvas opens:
 - drag between handles to connect; click a node or edge to configure it on the right
 - `Ctrl/Cmd+Z` / `Ctrl/Cmd+Shift+Z` undo and redo, `Ctrl/Cmd+C`/`V` copy and paste, `Delete`
   removes the selection, `Ctrl/Cmd+S` saves (to the project's draft)
+- **Problems** (the bar under the canvas): the workflow is checked as you edit. Nodes and edges
+  with errors are outlined red, warnings amber; click a problem to jump to it, and some have a
+  one-click fix. A loop without a cap blocks saving; any error blocks merging.
+- **Context preview** (select an agent, press `P`): exactly what that agent receives: its prompt,
+  skills, tools with their scopes, and each input as its edge's context mode delivers it
+- decisions: the evaluator (code, agent or human), its exits in order, and what happens when a
+  loop's cap is hit; deterministic code is Python in a code editor (drop a `.py` file on it).
+  Nothing is ever run in this version.
 
 ## Check
 ```sh

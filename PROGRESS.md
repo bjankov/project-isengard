@@ -204,3 +204,54 @@ How to try it: **Projects → New project**, type a name, keep **New folder**, s
 Tests: 105 unit/API tests (2 new), 13 e2e tests (the demo workflow test now uses a new folder; the template test covers an existing folder with `git init`).
 
 Deviations from PLAN.md: none. PLAN.md 9.2 asks for a workspace path "validated as a git repo, with git init offered"; creating the folder is an addition.
+
+## M4: Decisions, validation, context preview (2026-11-05)
+Status: done
+
+Built:
+- **Live validation** (`validateWorkflow` in `packages/schema`, shared by the canvas and the server):
+  - **every PLAN.md 9.5 rule except patterns:** uncapped loops, an agent writing an artifact without a covering write tool, `reference` mode without a covering read tool (or from something that isn't a file), unconnected decision exits, decisions without exits, nodes not reachable from an Input, unrestricted shells
+  - **plus:** a missing join mode, n-of-m larger than the inputs, a missing `onExhausted` exit, missing agents or presets, a missing Input, a single exit, an incomplete evaluator
+- **Loops:** every loop must go through a decision exit with Max loops. Loops without a decision are refused.
+- **What blocks what:** an uncapped loop blocks **saving**; any error blocks **merging**. Both are enforced in the UI and by the server.
+- **Problems on the canvas:**
+  - red or amber outlines, corner markers and red edges
+  - a problems bar under the canvas (counts, what is blocked, click to jump, one-click fixes "Cap at 3 loops" and "Wait for all inputs")
+  - each item's problems at the top of the inspector
+- **Decisions:**
+  - Monaco Python editor with a language select, **Load file…** and drag and drop of `.py` files, and an Expand dialog
+  - the v2 contract explained in the hint
+  - exits in order (exit code 0 takes the first)
+  - **When the cap is hit:** stop and ask a human, or take another exit
+  - human decisions start with approve / reject
+- **Joins:** a Join field (Wait for all / Any one / Some N) and a join chip on nodes with several inputs. Loop-backs and shared-store reads don't count as inputs.
+- **Context preview** (agent inspector button, or `P`):
+  - the agent's version, model, effort and limits (overrides highlighted)
+  - its prompt, its skills with their bodies, its tools with their scopes
+  - every input in plain words, according to its context mode and loop history, with related problems
+- **API:** `400 {error: "workflow", problems}` for refused saves and merges.
+
+How to try it:
+1. Run `pnpm dev` and open a project with a loop, for example demo workflow 1 built as in M3.
+2. Click the loop edge's `max 3` label and clear **Max loops**. The loop turns red and the badge says `no cap`. Press `Ctrl/Cmd+S`: saving is refused. In **Problems** under the canvas, click **Cap at 3 loops**.
+3. Click the PLAN.md → Executor edge and set **Context mode** to Reference. Unless the Executor has a Read file preset covering `PLAN.md`, an error appears. Save works, but **Merge** is disabled and explains why. Set the mode back to Full, save, and merge.
+4. Connect the Task to the Executor. **join?** appears; click **Wait for all inputs**.
+5. Click the decision. Drop a `.py` file on the code editor, reorder the exits, and set **When the cap is hit**.
+6. Select an agent and press `P` for the context preview. Change an incoming edge's context mode and look again.
+7. Run the checks:
+   - `pnpm check`: 133 unit and API tests, 28 of them new
+   - `pnpm test:e2e`: 16 browser tests, 3 new: every rule triggered and resolved with Save and Merge blocked, decision code from a file with exits, the context preview for all six modes
+
+Deviations from PLAN.md:
+- **The pattern rule** (unconnected port, unbound slot) is not built. Patterns can't be placed until M5, so it moves there. Agreed at planning.
+- **PLAN.md changed by agreement:**
+  - 7.4: every loop must pass through a capped decision exit; loops without a decision are not allowed
+  - 7.5: which inputs count for a join
+  - 9.5: errors block merging
+
+Open issues / questions:
+- **Projects saved in M3 with an uncapped loop** still open, but can't be saved until the loop is capped; the problem and its fix are shown.
+- **Glob coverage is conservative.** An artifact path that is itself a glob counts as covered only when containment is clear (`src/**` covers `src/api/**`; `**/*.ts` doesn't cover `src/*.ts`). Say if you'd rather show "can't confirm" as a warning instead of an error.
+- **Toasts sit bottom-left, so they briefly cover the left end of the problems bar.** Moving them (e.g. top-centre) would change every editor; say if you want that.
+- **Context preview covers agent nodes only.** An evaluator agent in a decision has no preview yet; it would show the decision's input and the criteria.
+- **Templates are checked on the server like projects** (uncapped loops block creating one), but there is no template editor to show their problems.
