@@ -95,3 +95,27 @@ Format: date, milestone, decision, reason.
 - **The sonner theme is fixed to light** (no `next-themes`) until dark mode in M7.
 - **E2E tests use the installed Chrome** (`channel: 'chrome'`, no browser download). Each run gets a fresh temp `APP_HOME`, with the API on :4417 and the web app on :5299.
 - The `shadcn add` alias bug happened again. It installed the unrelated `cn` and `next-themes` packages. Both were removed and the imports fixed by hand.
+
+## 2026-11-04 (M1, follow-up)
+
+### Advanced skill frontmatter (requested by the user)
+- **The Skill schema models every optional field in the Agent Skills format:**
+  - `license`
+  - `compatibility` (at most 500 characters)
+  - `metadata` (string → string)
+  - `allowedTools`, written to the file as the space-delimited `allowed-tools`
+- **Any other frontmatter key is kept as written** in `extraFrontmatter`. It may not redefine a standard key. Hand-written or imported skills no longer lose fields when edited in the app.
+- **Reading metadata:** scalar values (`version: 2`) are read as strings, because the standard defines metadata as string → string. `allowed-tools` is also accepted as a YAML list, and is always written back as a space-delimited string.
+- **One SKILL.md converter** (`packages/schema/src/skill-md.ts`) turns skills into file text and back. Both the server and the web app use it, so the raw editor shows exactly what goes on disk. `yaml` became a dependency of `@app/schema` for this.
+- **UI:**
+  - Advanced options are hidden behind an **Advanced** button. It shows a count when advanced fields are set, so nothing is set invisibly. The choice is remembered per browser (`localStorage`).
+  - When on, the editor widens and an advanced panel appears beside name and description.
+  - A **Form | SKILL.md** switch edits the raw file, which is the standard format for skills.
+  - Invalid YAML (raw file or the other-fields box) blocks saving and switching back to the form.
+- **Change detection ignores key order**, so switching between the form and the raw file never shows false unsaved changes.
+- **`allowed-tools` is informational only.** Agents get tool access from their presets alone. How the two should interact is an open v2 question (`V2_BACKLOG.md`).
+
+### Process
+- **`V2_BACKLOG.md` collects everything deferred to v2.** CLAUDE.md now says to add to it whenever something is deferred.
+- **Deferred to v2:** drag-to-reorder an agent's skills and tools. It has no functional effect in v1, and the order is already stored.
+- **Bundle size:** no action, by the user's decision.

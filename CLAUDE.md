@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 ## Project
-The full specification is in `PLAN.md`. It is the source of truth for scope, data model, semantics and milestones. Progress lives in `PROGRESS.md`, and decisions made during implementation live in `DECISIONS.md`. Create either file if it doesn't exist.
+The full specification is in `PLAN.md`. It is the source of truth for scope, data model, semantics and milestones. Progress lives in `PROGRESS.md`, and decisions made during implementation live in `DECISIONS.md`. Create either file if it doesn't exist. Anything deferred to v2 goes into `V2_BACKLOG.md`.
 
 ## How we work: one milestone per session
 
