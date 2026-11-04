@@ -6,6 +6,7 @@ export * from './agent.js';
 export * from './workflow/nodes.js';
 export * from './workflow/edges.js';
 export * from './workflow/graph.js';
+export * from './workflow/editing.js';
 export * from './entities.js';
 export * from './api.js';
 export * from './versioning.js';

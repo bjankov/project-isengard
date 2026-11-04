@@ -353,6 +353,12 @@ export class LibraryStore {
     return entity;
   }
 
+  /** The last saved state: the draft if there is one, otherwise main. */
+  async getLatest<K extends EntityKind>(kind: K, id: string): Promise<EntityByKind[K]> {
+    const hasDraft = await this.git.revParse(entityRefs(kind, id).branch(DRAFT_BRANCH));
+    return this.get(kind, id, hasDraft ? DRAFT_BRANCH : undefined);
+  }
+
   references(kind: EntityKind, id: string): ReferencesResponse {
     return { outgoing: this.index.outgoing(kind, id), incoming: this.index.incoming(kind, id) };
   }
