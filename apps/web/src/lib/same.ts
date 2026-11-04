@@ -16,3 +16,13 @@ function stable(value: unknown): unknown {
 export function sameData(a: unknown, b: unknown): boolean {
   return JSON.stringify(stable(a)) === JSON.stringify(stable(b));
 }
+
+/** A copy of `obj` without the given keys. */
+export function omit<T>(obj: Record<string, T>, ...keys: string[]): Record<string, T> {
+  return Object.fromEntries(Object.entries(obj).filter(([k]) => !keys.includes(k)));
+}
+
+/** A copy of `obj` without keys whose value is undefined. */
+export function compact<T extends object>(obj: T): T {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as T;
+}

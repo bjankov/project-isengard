@@ -1,8 +1,9 @@
 import { createBrowserRouter, Navigate } from 'react-router';
-import { FolderKanban, Shapes } from 'lucide-react';
+import { Shapes } from 'lucide-react';
 import { AppShell } from '@/components/app-shell';
 import { AgentEditorRoute, AgentsIndex, AgentsLayout } from '@/routes/agents';
 import { PlaceholderPage } from '@/routes/placeholder-page';
+import { ProjectCanvasRoute, ProjectsPage } from '@/routes/projects';
 import { SettingsPage } from '@/routes/settings';
 import { SkillEditorRoute, SkillsIndex, SkillsLayout } from '@/routes/skills';
 import { BuiltinToolRoute, ToolEditorRoute, ToolsIndex, ToolsLayout } from '@/routes/tools';
@@ -12,16 +13,8 @@ export const router = createBrowserRouter([
     element: <AppShell />,
     children: [
       { index: true, element: <Navigate to="/projects" replace /> },
-      {
-        path: '/projects',
-        element: (
-          <PlaceholderPage
-            title="Projects"
-            description="Your projects and workflow templates."
-            icon={FolderKanban}
-          />
-        ),
-      },
+      { path: '/projects', element: <ProjectsPage /> },
+      { path: '/projects/:id', element: <ProjectCanvasRoute /> },
       {
         path: '/agents',
         element: <AgentsLayout />,
