@@ -47,9 +47,11 @@ export interface WorkflowProblem {
   rule: ProblemRule;
   severity: 'error' | 'warning';
   message: string;
-  /** Affected nodes and edges; the first one is where the problem "is". */
+  /** Affected nodes and edges. */
   nodes: string[];
   edges: string[];
+  /** Where the problem is fixed: the node or edge to select. */
+  at?: { node: string } | { edge: string };
   /** Errors block merging; these also block saving (PLAN.md 7.4: uncapped loops). */
   blocksSave: boolean;
   fix?: ProblemFix & { label: string };
@@ -136,11 +138,21 @@ export function validateWorkflow(
     const n = nodes.get(id);
     return n ? nodeName(n, resolver) : id;
   };
-  const add = (p: Omit<WorkflowProblem, 'id' | 'blocksSave'> & { blocksSave?: boolean }) => {
-    const base = `${p.rule}:${p.edges[0] ?? p.nodes[0] ?? 'workflow'}`;
+  /** `focus: 'edge'` puts the problem on its first edge, otherwise on its first node. */
+  const add = ({
+    focus,
+    ...p
+  }: Omit<WorkflowProblem, 'id' | 'blocksSave' | 'at'> & {
+    blocksSave?: boolean;
+    focus?: 'edge';
+  }) => {
+    const edge = p.edges[0];
+    const node = p.nodes[0];
+    const at = focus === 'edge' && edge ? { edge } : node ? { node } : edge ? { edge } : undefined;
+    const base = `${p.rule}:${edge ?? node ?? 'workflow'}`;
     let id = base;
     for (let i = 2; problems.some((x) => x.id === id); i++) id = `${base}:${i}`;
-    problems.push({ ...p, id, blocksSave: p.blocksSave ?? false });
+    problems.push({ ...p, id, blocksSave: p.blocksSave ?? false, ...(at ? { at } : {}) });
   };
 
   // ---- Structure ----
@@ -167,6 +179,7 @@ export function validateWorkflow(
         rule: 'uncapped-loop',
         severity: 'error',
         blocksSave: true,
+        focus: 'edge',
         message: `The loop through ${names} has no cap. Set Max loops on the “${exit.label}” exit of ${name(exitEdge.source.node)}.`,
         nodes: [exitEdge.source.node, ...loop.nodes.filter((n) => n !== exitEdge.source.node)],
         edges: [exitEdge.id, ...loop.edges.filter((e) => e !== exitEdge.id)],
@@ -184,6 +197,7 @@ export function validateWorkflow(
         rule: 'uncapped-loop',
         severity: 'error',
         blocksSave: true,
+        focus: 'edge',
         message: `The loop through ${names} has no decision, so nothing can stop it. Loops must go through a decision exit with Max loops.`,
         nodes: loop.nodes,
         edges: back ? [back.id, ...loop.edges.filter((e) => e !== back.id)] : loop.edges,
@@ -378,6 +392,7 @@ export function validateWorkflow(
           add({
             rule: 'write-not-covered',
             severity: 'error',
+            focus: 'edge',
             message: `${agent.name} writes ${to.path}, but none of its tools can write there. Give it a Write file or Edit file preset covering ${to.path}${scopes.length ? ` (its write tools cover ${scopes.join(', ')})` : ''}.`,
             nodes: [from.id, to.id],
             edges: [edge.id],
@@ -399,6 +414,7 @@ export function validateWorkflow(
         add({
           rule: 'reference-not-file',
           severity: 'error',
+          focus: 'edge',
           message: `This edge passes a reference, but ${origin ? name(origin.id) : 'its source'} isn’t a file in the workspace. Connect it from an Artifact, or choose another context mode.`,
           nodes: [to.id],
           edges: [edge.id],
@@ -415,6 +431,7 @@ export function validateWorkflow(
           add({
             rule: 'reference-not-covered',
             severity: 'error',
+            focus: 'edge',
             message: `${agent.name} gets ${uncovered.join(', ')} by reference, but none of its tools can read it. Give it a Read file preset covering ${uncovered.join(', ')}${scopes.length ? ` (its read tools cover ${scopes.join(', ')})` : ''}.`,
             nodes: [to.id],
             edges: [edge.id],

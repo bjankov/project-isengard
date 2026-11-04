@@ -162,9 +162,11 @@ export function VersionActions({ versioning: v }: { versioning: Versioning }) {
 
   const mergeBlocked = v.dirty
     ? 'Save your changes first. Merge publishes what is saved on the draft.'
-    : draft && !draft.changed
-      ? 'The draft matches main, so there is nothing to merge. Discard it instead.'
-      : undefined;
+    : v.mergeBlocked
+      ? v.mergeBlocked
+      : draft && !draft.changed
+        ? 'The draft matches main, so there is nothing to merge. Discard it instead.'
+        : undefined;
 
   return (
     <>

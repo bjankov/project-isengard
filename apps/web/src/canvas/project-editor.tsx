@@ -1,5 +1,6 @@
 import {
   analyzeLoops,
+  applyFix,
   canConnect,
   cloneSubgraph,
   createEdge,
@@ -13,6 +14,7 @@ import {
   type NodeNeeds,
   type Subgraph,
   type WorkflowGraph,
+  type WorkflowProblem,
 } from '@app/schema';
 import {
   Background,
@@ -47,7 +49,10 @@ import { edgeTypes, type FlowEdge } from './edges';
 import { Inspector, type Selection } from './inspector';
 import { flowNodeType, nodeTypes, type FlowNode } from './nodes';
 import { NEEDS_PICK, NODE_DRAG_TYPE, Palette, QuickAdd } from './palette';
+import { ContextPreview } from './context-preview';
+import { ProblemsPanel } from './problems-panel';
 import { SaveAsTemplateDialog } from './save-as-template';
+import { useWorkflowCheck } from './use-workflow-check';
 
 const GRID = 16;
 const FIT_VIEW = { padding: 0.25, maxZoom: 1 };
@@ -114,15 +119,66 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
     at?: { x: number; y: number };
   } | null>(null);
   const [templateOpen, setTemplateOpen] = useState(false);
+  const [problemsOpen, setProblemsOpen] = useState(false);
+  const [preview, setPreview] = useState<string | null>(null);
   const pasteCount = useRef(0);
-
-  useSaveShortcut(() => void editor.save());
 
   // Forks may have been edited since they were cached.
   useEffect(() => usePinnedStore.getState().forgetBranches(), []);
 
   const graph = doc.workflow as WorkflowGraph;
   const loops = useMemo(() => analyzeLoops(graph), [graph]);
+  const check = useWorkflowCheck(graph, loops);
+
+  // ---- Problems ----
+
+  /** Select the node or edge a problem is about, and bring it into view. */
+  const selectProblem = useCallback(
+    (p: WorkflowProblem) => {
+      if (!p.at) return;
+      const nodeIds =
+        'node' in p.at
+          ? [p.at.node]
+          : (() => {
+              const e = graph.edges.find((x) => p.at && 'edge' in p.at && x.id === p.at.edge);
+              return e ? [e.source.node, e.target.node] : [];
+            })();
+      setSelection(
+        'node' in p.at ? { nodes: [p.at.node], edges: [] } : { nodes: [], edges: [p.at.edge] },
+      );
+      void flow.fitView({
+        nodes: nodeIds.map((id) => ({ id })),
+        duration: 300,
+        padding: 0.6,
+        maxZoom: 1,
+      });
+    },
+    [graph.edges, flow],
+  );
+
+  const fix = useCallback(
+    (p: WorkflowProblem) => {
+      const f = p.fix;
+      if (!f) return;
+      change((d) => ({ ...d, workflow: applyFix(d.workflow, f) }));
+      toast.success(f.label);
+    },
+    [change],
+  );
+
+  /** Saving is refused while a loop has no cap (PLAN.md 7.4); the server checks too. */
+  const save = useCallback(() => {
+    const first = check.blocking[0];
+    if (first) {
+      toast.error('Can’t save: a loop has no cap', { description: first.message });
+      setProblemsOpen(true);
+      selectProblem(first);
+      return;
+    }
+    void editor.save();
+  }, [check.blocking, editor, selectProblem]);
+
+  useSaveShortcut(save);
 
   // ---- React Flow view of the document ----
 
@@ -157,6 +213,7 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
         const exit =
           from?.type === 'decision' ? from.exits.find((x) => x.id === e.source.port) : undefined;
         const back = loops.backEdges.has(e.id);
+        const problem = check.edges.get(e.id);
         return {
           id: e.id,
           type: 'workflow',
@@ -169,12 +226,18 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
             type: MarkerType.ArrowClosed,
             width: 16,
             height: 16,
-            color: back ? '#f59e0b' : '#94a3b8',
+            color: problem === 'error' ? '#dc2626' : back ? '#f59e0b' : '#94a3b8',
           },
-          data: { edge: e, back, cap: exit?.maxIterations },
+          data: {
+            edge: e,
+            back,
+            cap: loops.capEdges.has(e.id) ? exit?.maxIterations : undefined,
+            uncapped: check.uncappedEdges.has(e.id),
+            problem,
+          },
         };
       }),
-    [graph, loops, selection.edges],
+    [graph, loops, check, selection.edges],
   );
 
   const onNodesChange = useCallback(
@@ -512,6 +575,9 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
       } else if (mod && key === 'a') {
         e.preventDefault();
         setSelection({ nodes: graph.nodes.map((n) => n.id), edges: [] });
+      } else if (!mod && !e.altKey && key === 'p' && after?.type === 'agent') {
+        e.preventDefault();
+        setPreview(after.id);
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
         deleteSelection();
@@ -519,14 +585,26 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [history, copy, paste, deleteSelection, graph.nodes]);
+  }, [history, copy, paste, deleteSelection, graph.nodes, after]);
 
   const context: CanvasContextValue = useMemo(
-    () => ({ graph, overrides: doc.overrides, loops, settings, tools }),
-    [graph, doc.overrides, loops, settings, tools],
+    () => ({ graph, overrides: doc.overrides, loops, check, settings, tools }),
+    [graph, doc.overrides, loops, check, settings, tools],
   );
 
   const shortcut = (k: string) => `${isMac ? '⌘' : 'Ctrl+'}${k}`;
+
+  // A version on main must be complete: any error blocks merging.
+  const versioning = useMemo(
+    () => ({
+      ...editor.versioning,
+      mergeBlocked:
+        check.errors > 0
+          ? `Fix the workflow’s ${check.errors === 1 ? 'error' : `${check.errors} errors`} first (see Problems under the canvas). A version on main must be complete.`
+          : undefined,
+    }),
+    [editor.versioning, check.errors],
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -536,9 +614,9 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
         title={editor.saved?.name ?? doc.name}
         dirty={editor.dirty}
         saving={editor.saving}
-        onSave={() => void editor.save()}
+        onSave={save}
         onDelete={editor.saved ? editor.remove : undefined}
-        versioning={editor.versioning}
+        versioning={versioning}
         actions={
           <>
             <div className="flex items-center">
@@ -580,51 +658,60 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
       />
       <div className="flex min-h-0 flex-1">
         <Palette onPick={(type) => pick(type)} />
-        <div
-          ref={wrapper}
-          className="relative min-w-0 flex-1"
-          onDragOver={(e) => {
-            if (e.dataTransfer.types.includes(NODE_DRAG_TYPE)) {
-              e.preventDefault();
-              e.dataTransfer.dropEffect = 'move';
-            }
-          }}
-          onDrop={onDrop}
-          data-testid="canvas"
-        >
-          <CanvasContext.Provider value={context}>
-            <ReactFlow<FlowNode, FlowEdge>
-              nodes={nodes}
-              edges={edges}
-              nodeTypes={nodeTypes}
-              edgeTypes={edgeTypes}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
-              onConnectEnd={onConnectEnd}
-              isValidConnection={isValidConnection}
-              deleteKeyCode={null}
-              selectionKeyCode="Shift"
-              multiSelectionKeyCode={isMac ? 'Meta' : 'Control'}
-              snapToGrid
-              snapGrid={[GRID, GRID]}
-              fitView
-              fitViewOptions={FIT_VIEW}
-              minZoom={0.2}
-              maxZoom={2}
-            >
-              <Background variant={BackgroundVariant.Dots} gap={GRID} size={1} />
-              <MiniMap pannable zoomable className="!rounded-md !border" />
-              <Controls showInteractive={false} fitViewOptions={FIT_VIEW} />
-            </ReactFlow>
-          </CanvasContext.Provider>
-          {graph.nodes.length === 0 && (
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <p className="rounded-md bg-background/80 px-3 py-2 text-sm text-muted-foreground">
-                Drag a node from the left, or press {shortcut('K')}.
-              </p>
-            </div>
-          )}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div
+            ref={wrapper}
+            className="relative min-h-0 min-w-0 flex-1"
+            onDragOver={(e) => {
+              if (e.dataTransfer.types.includes(NODE_DRAG_TYPE)) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+              }
+            }}
+            onDrop={onDrop}
+            data-testid="canvas"
+          >
+            <CanvasContext.Provider value={context}>
+              <ReactFlow<FlowNode, FlowEdge>
+                nodes={nodes}
+                edges={edges}
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onConnectEnd={onConnectEnd}
+                isValidConnection={isValidConnection}
+                deleteKeyCode={null}
+                selectionKeyCode="Shift"
+                multiSelectionKeyCode={isMac ? 'Meta' : 'Control'}
+                snapToGrid
+                snapGrid={[GRID, GRID]}
+                fitView
+                fitViewOptions={FIT_VIEW}
+                minZoom={0.2}
+                maxZoom={2}
+              >
+                <Background variant={BackgroundVariant.Dots} gap={GRID} size={1} />
+                <MiniMap pannable zoomable className="!rounded-md !border" />
+                <Controls showInteractive={false} fitViewOptions={FIT_VIEW} />
+              </ReactFlow>
+            </CanvasContext.Provider>
+            {graph.nodes.length === 0 && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <p className="rounded-md bg-background/80 px-3 py-2 text-sm text-muted-foreground">
+                  Drag a node from the left, or press {shortcut('K')}.
+                </p>
+              </div>
+            )}
+          </div>
+          <ProblemsPanel
+            check={check}
+            open={problemsOpen}
+            onOpenChange={setProblemsOpen}
+            onSelect={selectProblem}
+            onFix={fix}
+          />
         </div>
         <Inspector
           projectId={projectId}
@@ -635,6 +722,9 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
           errors={editor.errors}
           onDeleteSelection={deleteSelection}
           onWorkspaceCheck={() => undefined}
+          check={check}
+          onFix={fix}
+          onPreview={setPreview}
         />
       </div>
       <QuickAdd
@@ -645,6 +735,13 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
         onAdd={(type, needs) => addNode(type, needs, quickAdd?.at)}
       />
       <SaveAsTemplateDialog open={templateOpen} onOpenChange={setTemplateOpen} doc={doc} />
+      <ContextPreview
+        nodeId={preview}
+        onOpenChange={(open) => !open && setPreview(null)}
+        doc={doc}
+        loops={loops}
+        check={check}
+      />
     </div>
   );
 }
