@@ -39,12 +39,16 @@ export type EditorSource<K extends EntityKind> =
       input: EntityInput<K>;
       /** Undefined for a new entity, or when the version state could not be loaded. */
       status: VersionStatus | undefined;
+      /** The branch saves go to: the draft, or a fork opened with `?branch=`. */
+      branch: string;
     };
 
 interface LoadedVersions<K extends EntityKind> {
   key: string;
   status?: VersionStatus;
-  draft?: EntityByKind[K];
+  /** The entity on the branch being edited, if that branch exists. */
+  onBranch?: EntityByKind[K];
+  missingBranch?: boolean;
 }
 
 /**
@@ -56,9 +60,11 @@ export function useEditorSource<K extends EntityKind>(
   kind: K,
   id: string | undefined,
   makeNew: () => EntityInput<K> | undefined,
+  /** Edit this existing branch (a fork) instead of the draft. */
+  branch: string = DRAFT_BRANCH,
 ): EditorSource<K> {
   const list = useEntities(kind);
-  const key = id === undefined ? undefined : `${kind}/${id}`;
+  const key = id === undefined ? undefined : `${kind}/${id}@${branch}`;
   const [loaded, setLoaded] = useState<LoadedVersions<K>>();
 
   useEffect(() => {
@@ -66,10 +72,13 @@ export function useEditorSource<K extends EntityKind>(
     let cancelled = false;
     void (async () => {
       let status: VersionStatus | undefined;
-      let draft: EntityByKind[K] | undefined;
+      let onBranch: EntityByKind[K] | undefined;
+      let missingBranch = false;
       try {
         status = await api.versions(kind, id);
-        if (draftOf(status)) draft = await api.get(kind, id, DRAFT_BRANCH);
+        if (status.branches.some((b) => b.name === branch)) {
+          onBranch = await api.get(kind, id, branch);
+        } else missingBranch = branch !== DRAFT_BRANCH;
       } catch (err) {
         // Not found is shown from the list below; otherwise edit main without version info.
         if (!(err instanceof ApiError && err.status === 404)) {
@@ -78,25 +87,26 @@ export function useEditorSource<K extends EntityKind>(
           });
         }
       }
-      if (!cancelled) setLoaded({ key, status, draft });
+      if (!cancelled) setLoaded({ key, status, onBranch, missingBranch });
     })();
     return () => {
       cancelled = true;
     };
-  }, [kind, id, key]);
+  }, [kind, id, key, branch]);
 
   if (id === undefined) {
     const input = makeNew();
     return input
-      ? { state: 'ready', saved: undefined, input, status: undefined }
+      ? { state: 'ready', saved: undefined, input, status: undefined, branch: DRAFT_BRANCH }
       : { state: 'loading' };
   }
   if (!list) return { state: 'loading' };
   const stored = list.find((e) => e.id === id);
   if (!stored) return { state: 'notFound' };
   if (!loaded || loaded.key !== key) return { state: 'loading' };
-  const saved = loaded.draft ?? stored;
-  return { state: 'ready', saved, input: withoutId<K>(saved), status: loaded.status };
+  if (loaded.missingBranch) return { state: 'notFound' };
+  const saved = loaded.onBranch ?? stored;
+  return { state: 'ready', saved, input: withoutId<K>(saved), status: loaded.status, branch };
 }
 
 export type EditorSourceReady<K extends EntityKind> = Extract<EditorSource<K>, { state: 'ready' }>;
@@ -110,6 +120,8 @@ export interface Versioning {
   id: string | undefined;
   name: string;
   status: VersionStatus | undefined;
+  /** The branch saves go to: `draft`, or a fork. */
+  branch: string;
   /** Unsaved changes in the editor. */
   dirty: boolean;
   busy: boolean;
@@ -148,8 +160,10 @@ export function useEntityEditor<K extends EntityKind>(
     saved: EntityByKind[K] | undefined;
     input: EntityInput<K>;
     status: VersionStatus | undefined;
+    branch?: string;
   },
 ): EntityEditor<K> {
+  const branch = source.branch ?? DRAFT_BRANCH;
   const navigate = useNavigate();
   const upsert = useLibrary((s) => s.upsert);
   const setVersion = useLibrary((s) => s.setVersion);
@@ -212,12 +226,18 @@ export function useEntityEditor<K extends EntityKind>(
     }
     setSaving(true);
     try {
-      const res = saved ? await api.update(kind, saved.id, draft) : await api.create(kind, draft);
+      const res = saved
+        ? await api.update(kind, saved.id, draft, branch === DRAFT_BRANCH ? undefined : branch)
+        : await api.create(kind, draft);
       // Creating writes main; updating only writes the draft, so the list (main) stays.
       if (!saved) upsert(kind, res.entity);
       setStatus(res.entity.id, res.status);
       resetTo(res.entity);
-      const where = saved ? 'to the draft' : `as ${res.status.current ?? 'v1'}`;
+      const where = !saved
+        ? `as ${res.status.current ?? 'v1'}`
+        : branch === DRAFT_BRANCH
+          ? 'to the draft'
+          : `to ${branch}`;
       toast.success(res.commit ? `Saved “${res.entity.name}” ${where}` : 'No changes to save', {
         description: res.commit ? `Commit ${res.commit.hash.slice(0, 7)}` : undefined,
       });
@@ -239,7 +259,7 @@ export function useEntityEditor<K extends EntityKind>(
     } finally {
       setSaving(false);
     }
-  }, [draft, saving, kind, saved, upsert, navigate, setStatus, resetTo]);
+  }, [draft, saving, kind, saved, upsert, navigate, setStatus, resetTo, branch]);
 
   const merge = useCallback(
     async ({
@@ -323,6 +343,7 @@ export function useEntityEditor<K extends EntityKind>(
       id: saved?.id,
       name: saved?.name ?? '',
       status,
+      branch,
       dirty,
       busy,
       merge,

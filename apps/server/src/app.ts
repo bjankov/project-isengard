@@ -4,6 +4,7 @@ import {
   type DiffResponse,
   type DiscardBranchResponse,
   type HistoryResponse,
+  type CreateBranchRequest,
   type MergeRequest,
   type VersionStatus,
   type WorkspaceCheck,
@@ -180,18 +181,20 @@ export async function buildApp(
     async (req) => store.get(kindParam(req.params.kinds), req.params.id, req.query.ref),
   );
 
-  app.put<{ Params: { kinds: string; id: string }; Body: unknown }>(
-    '/api/:kinds/:id',
-    async (req) => {
-      const kind = kindParam(req.params.kinds);
-      let body = req.body;
-      if (kind === 'project') {
-        const previous = await store.getLatest('project', req.params.id);
-        body = await prepareProject(body, previous.workspacePath);
-      }
-      return store.update(kind, req.params.id, body);
-    },
-  );
+  /** Saves to the draft branch, or to `?branch=` (an existing branch such as a fork). */
+  app.put<{
+    Params: { kinds: string; id: string };
+    Body: unknown;
+    Querystring: { branch?: string };
+  }>('/api/:kinds/:id', async (req) => {
+    const kind = kindParam(req.params.kinds);
+    let body = req.body;
+    if (kind === 'project') {
+      const previous = await store.getLatest('project', req.params.id);
+      body = await prepareProject(body, previous.workspacePath);
+    }
+    return store.update(kind, req.params.id, body, { branch: req.query.branch });
+  });
 
   app.delete<{ Params: { kinds: string; id: string } }>('/api/:kinds/:id', async (req) =>
     store.delete(kindParam(req.params.kinds), req.params.id),
@@ -229,6 +232,23 @@ export async function buildApp(
         force: body.force === true,
         note: body.note,
       });
+    },
+  );
+
+  app.post<{ Params: { kinds: string; id: string }; Body: CreateBranchRequest | undefined }>(
+    '/api/:kinds/:id/branches',
+    async (req, reply) => {
+      const { name, from } = req.body ?? {};
+      if (typeof name !== 'string' || typeof from !== 'string') {
+        throw new BadRequestError('"name" and "from" are required');
+      }
+      const status = await store.createBranch(
+        kindParam(req.params.kinds),
+        req.params.id,
+        name,
+        from,
+      );
+      return reply.status(201).send({ status } satisfies DiscardBranchResponse);
     },
   );
 

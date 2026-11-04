@@ -768,6 +768,55 @@ describe('versioning', () => {
     expect(git('branch', '--list', `agent/${id}/draft`).trim()).not.toBe('');
   });
 
+  it('creates a fork branch at a version and saves to it', async () => {
+    await start();
+    const id = await createAgent();
+    await edit(id, { name: 'Two' });
+    await api('POST', `/api/agents/${id}/merge`);
+
+    const fork = await api<{ status: VersionStatus }>('POST', `/api/agents/${id}/branches`, {
+      name: 'fork-proj-agent-1',
+      from: 'v1',
+    });
+    expect(fork.status).toBe(201);
+    expect(fork.body.status.branches).toMatchObject([{ name: 'fork-proj-agent-1', commits: 0 }]);
+    expect(git('rev-parse', `agent/${id}/fork-proj-agent-1`).trim()).toBe(
+      git('rev-parse', `agent/${id}/v1`).trim(),
+    );
+    expect(
+      (await api<{ name: string }>('GET', `/api/agents/${id}?ref=fork-proj-agent-1`)).body.name,
+    ).toBe('Planner');
+
+    const saved = await api<{ status: VersionStatus }>(
+      'PUT',
+      `/api/agents/${id}?branch=fork-proj-agent-1`,
+      { ...sampleAgent, skills: [], tools: [], name: 'Forked' },
+    );
+    expect(saved.status).toBe(200);
+    expect(
+      (await api<{ name: string }>('GET', `/api/agents/${id}?ref=fork-proj-agent-1`)).body.name,
+    ).toBe('Forked');
+    // main and the (absent) draft are untouched
+    expect((await api<{ name: string }>('GET', `/api/agents/${id}`)).body.name).toBe('Two');
+    expect(saved.body.status.branches.map((b) => b.name)).toEqual(['fork-proj-agent-1']);
+
+    const dup = await api('POST', `/api/agents/${id}/branches`, {
+      name: 'fork-proj-agent-1',
+      from: 'v2',
+    });
+    expect(dup.status).toBe(400);
+    expect(
+      (await api('POST', `/api/agents/${id}/branches`, { name: 'draft', from: 'v1' })).status,
+    ).toBe(400);
+    expect(
+      (await api('POST', `/api/agents/${id}/branches`, { name: 'x', from: 'v9' })).status,
+    ).toBe(404);
+    expect(
+      (await api('PUT', `/api/agents/${id}?branch=nope`, { ...sampleAgent, skills: [], tools: [] }))
+        .status,
+    ).toBe(404);
+  });
+
   it('includes versions in full lists', async () => {
     await start();
     const id = await createAgent();

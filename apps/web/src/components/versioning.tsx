@@ -1,11 +1,12 @@
 import {
+  DRAFT_BRANCH,
   MERGE_NOTE_MAX,
   draftOf,
   versionName,
   versionNumber,
   type HistoryResponse,
 } from '@app/schema';
-import { GitBranch, GitMerge, History, Loader2, Undo2 } from 'lucide-react';
+import { GitBranch, GitFork, GitMerge, History, Loader2, Undo2 } from 'lucide-react';
 import { useState } from 'react';
 import { FileDiffs } from '@/components/diff-viewer';
 import { CharCounter } from '@/components/field';
@@ -81,7 +82,17 @@ export function VersionIndicator({ versioning: v }: { versioning: Versioning }) 
 
   let chip: React.ReactNode;
   let explanation: string;
-  if (draft) {
+  const fork =
+    v.branch !== DRAFT_BRANCH ? v.status.branches.find((b) => b.name === v.branch) : undefined;
+  if (fork) {
+    chip = (
+      <span className="inline-flex items-center gap-1 rounded-md bg-violet-100 px-1.5 py-0.5 text-xs font-medium text-violet-800">
+        <GitFork className="size-3" />
+        fork · {fork.commits === 0 ? 'no changes yet' : plural(fork.commits, 'save')}
+      </span>
+    );
+    explanation = `You are editing ${fork.name}, a fork pinned by a project. Saves go to this branch only; main and the draft are untouched.`;
+  } else if (draft) {
     chip = (
       <span className="inline-flex items-center gap-1 rounded-md bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-amber-800">
         <GitBranch className="size-3" />
@@ -136,7 +147,8 @@ export function VersionActions({ versioning: v }: { versioning: Versioning }) {
   const [mergeOpen, setMergeOpen] = useState(false);
   const [note, setNote] = useState('');
   if (!v.id || !v.status) return null;
-  const draft = draftOf(v.status);
+  // Forks are only edited here; promoting them comes with M5/M6.
+  const draft = v.branch === DRAFT_BRANCH ? draftOf(v.status) : undefined;
   const next = nextVersion(v.status.current);
 
   const noteTooLong = note.trim().length > MERGE_NOTE_MAX;
