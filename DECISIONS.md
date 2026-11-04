@@ -207,3 +207,12 @@ Format: date, milestone, decision, reason.
 - **Copy/paste:** copying keeps the nodes, the edges between them and their agent overrides for the session, so they can be pasted into another project.
 - **Blank projects** start with an unconnected Input and Output.
 - React Flow node types are prefixed `wf-` so React Flow's built-in `input`/`output` styles never apply.
+
+### M3 follow-up: creating the workspace folder (2026-11-04)
+- **New project creates its workspace folder by default** (user request).
+  - The dialog has **New folder** (default) and **Existing repo**.
+  - New folder takes a location and a folder name. The name follows the project name, slugified, until edited.
+  - The full path is shown and checked before anything is created: nothing may exist there yet, it must not be inside the library store, and missing parent folders are created. A new repo nested inside another git repo is allowed, with a warning.
+- **The folder is created in the same request as the project** (`POST /api/projects?createWorkspace=1`). The server validates the project first, then creates the folder and runs `git init`, then creates the project. A rejected project never leaves a folder behind.
+- **The last location is remembered per browser** (`localStorage`), defaulting to `~/`. Reason: a convenience, not data worth versioning in Settings.
+- `git init` is the only thing run in the new folder. No files or commits are added.

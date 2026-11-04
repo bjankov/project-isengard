@@ -5,7 +5,7 @@
  */
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { readdir, realpath, stat } from 'node:fs/promises';
+import { mkdir, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, normalize, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
@@ -81,6 +81,80 @@ export async function checkWorkspace(input: string, libraryDir: string): Promise
     };
   }
   return { path, status: 'ok' };
+}
+
+/** The closest existing folder at or above `path`. */
+async function nearestExisting(path: string): Promise<{ path: string; isDirectory: boolean }> {
+  let current = path;
+  for (;;) {
+    try {
+      const info = await stat(current);
+      return { path: current, isDirectory: info.isDirectory() };
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return { path: current, isDirectory: false };
+      current = parent;
+    }
+  }
+}
+
+/**
+ * Check a path where a new workspace folder would be created (missing parent folders are
+ * created too). `ok` means nothing exists there yet.
+ */
+export async function checkNewWorkspace(
+  input: string,
+  libraryDir: string,
+): Promise<WorkspaceCheck> {
+  const path = expandPath(input);
+  if (!isAbsolute(path)) {
+    return {
+      path,
+      status: 'not-absolute',
+      message: 'Use a full path, e.g. /home/you/code or ~/code.',
+    };
+  }
+  const existing = await nearestExisting(path);
+  if (existing.path === path) {
+    return {
+      path,
+      status: 'exists',
+      message: 'This folder already exists. Choose another name, or use an existing repo.',
+    };
+  }
+  if (!existing.isDirectory) {
+    return {
+      path,
+      status: 'not-a-directory',
+      message: `${existing.path} is a file, not a folder.`,
+    };
+  }
+  const library = existsSync(libraryDir) ? await realpath(libraryDir) : libraryDir;
+  const parent = await realpath(existing.path);
+  if (isWithin(parent, library)) {
+    return {
+      path,
+      status: 'is-library',
+      message: 'This is inside the app’s own library store. Choose another location.',
+    };
+  }
+  const root = await repoRootOf(existing.path);
+  return root
+    ? {
+        path,
+        status: 'ok',
+        warning: `This creates a repo inside the git repo at ${root}.`,
+      }
+    : { path, status: 'ok' };
+}
+
+/** Create a new folder (and missing parents) and run `git init` in it. */
+export async function createWorkspace(input: string, libraryDir: string): Promise<WorkspaceCheck> {
+  const before = await checkNewWorkspace(input, libraryDir);
+  if (before.status !== 'ok') return before;
+  await mkdir(before.path, { recursive: true });
+  await execFileAsync('git', ['-C', before.path, 'init', '--quiet']);
+  return checkWorkspace(before.path, libraryDir);
 }
 
 /** Run `git init` in an existing folder that is not in a git repo yet. */

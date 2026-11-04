@@ -1,4 +1,4 @@
-import type { EntityInput, Template, WorkspaceCheck } from '@app/schema';
+import { slugify, type EntityInput, type Template, type WorkspaceCheck } from '@app/schema';
 import { ReactFlowProvider } from '@xyflow/react';
 import { FolderGit2, FolderKanban, LayoutTemplate, Plus, Workflow } from 'lucide-react';
 import { useCallback, useState } from 'react';
@@ -8,7 +8,9 @@ import { ProjectEditor } from '@/canvas/project-editor';
 import { Field } from '@/components/field';
 import { NotFound } from '@/components/library-layout';
 import { DraftBadge } from '@/components/versioning';
-import { WorkspaceField } from '@/components/workspace-field';
+import { NewWorkspaceFields, WorkspaceField, joinPath } from '@/components/workspace-field';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { readPreference, writePreference } from '@/hooks/use-preference';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -26,6 +28,9 @@ import { ApiError, api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { issuesToErrors } from '@/lib/validation';
 import { useEntities, useLibrary, useVersions } from '@/stores/library';
+
+/** The last location a new workspace folder was created in (per browser). */
+const LOCATION_KEY = 'app.newWorkspaceLocation';
 
 /** A new blank workflow: an Input and an Output, ready to be connected. */
 function blankWorkflow(): Pick<EntityInput<'project'>, 'workflow' | 'layout'> {
@@ -180,7 +185,12 @@ function NewProjectForm({
   const setVersion = useLibrary((s) => s.setVersion);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [mode, setMode] = useState<'new' | 'existing'>('new');
   const [workspacePath, setWorkspacePath] = useState('');
+  const [location, setLocation] = useState(() => readPreference(LOCATION_KEY) ?? '~/');
+  /** Follows the project name until edited by hand. */
+  const [folder, setFolder] = useState<string>();
+  const folderName = folder ?? (name.trim() ? slugify(name) : '');
   const [templateId, setTemplateId] = useState<string | undefined>(initialTemplate?.id);
   const [check, setCheck] = useState<WorkspaceCheck>();
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -196,13 +206,17 @@ function NewProjectForm({
       const start = template
         ? { workflow: template.workflow, layout: template.layout }
         : blankWorkflow();
-      const res = await api.create('project', {
-        name: name.trim(),
-        description,
-        workspacePath,
-        overrides: {},
-        ...start,
-      });
+      const res = await api.createProject(
+        {
+          name: name.trim(),
+          description,
+          workspacePath: mode === 'new' ? joinPath(location, folderName) : workspacePath,
+          overrides: {},
+          ...start,
+        },
+        { createWorkspace: mode === 'new' },
+      );
+      if (mode === 'new') writePreference(LOCATION_KEY, location);
       upsert('project', res.entity);
       setVersion('project', res.entity.id, { version: res.status.current, hasDraft: false });
       toast.success(`Created “${res.entity.name}”`);
@@ -249,15 +263,52 @@ function NewProjectForm({
           placeholder="Optional."
         />
       </Field>
-      <Field label="Workspace" htmlFor="new-project-workspace">
-        <WorkspaceField
-          id="new-project-workspace"
-          value={workspacePath}
-          onChange={setWorkspacePath}
-          onCheck={onCheck}
-          error={errors.workspacePath}
-        />
-      </Field>
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-sm font-medium">Workspace</span>
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            value={mode}
+            onValueChange={(v) => {
+              if (!v) return;
+              setMode(v as 'new' | 'existing');
+              setCheck(undefined);
+            }}
+            aria-label="Workspace mode"
+          >
+            <ToggleGroupItem value="new" className="px-3 text-xs">
+              New folder
+            </ToggleGroupItem>
+            <ToggleGroupItem value="existing" className="px-3 text-xs">
+              Existing repo
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+        {mode === 'new' ? (
+          <NewWorkspaceFields
+            location={location}
+            folder={folderName}
+            onLocationChange={setLocation}
+            onFolderChange={setFolder}
+            onCheck={onCheck}
+            error={errors.workspacePath}
+          />
+        ) : (
+          <WorkspaceField
+            id="new-project-workspace"
+            label="Repo folder"
+            value={workspacePath}
+            onChange={setWorkspacePath}
+            onCheck={onCheck}
+            error={errors.workspacePath}
+          />
+        )}
+        <p className="text-xs text-muted-foreground">
+          The git repo of the product this workflow works on. The app only stores its path.
+        </p>
+      </div>
       <fieldset className="space-y-2">
         <legend className="text-sm font-medium">Start from</legend>
         <div className="grid gap-2 sm:grid-cols-2">

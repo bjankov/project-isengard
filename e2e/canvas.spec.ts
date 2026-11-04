@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
@@ -82,21 +82,22 @@ test('build demo workflow 1 by hand, save, reload: it looks identical', async ({
   await createAgent(page, 'Test writer', 'Writes and runs the tests');
   const workspace = mkdtempSync(join(tmpdir(), 'app-e2e-workspace-'));
 
-  // --- New project: the workspace is not a repo yet, so git init is offered
+  // --- New project in a new folder: the app creates it and runs git init
   await page.goto('/projects');
   await page.getByRole('button', { name: 'New project' }).first().click();
   const dialog = page.getByRole('dialog', { name: 'New project' });
   await dialog.getByLabel('Name', { exact: true }).fill('Demo: plan and execute');
-  await dialog.getByLabel('Workspace', { exact: true }).fill(workspace);
-  await expect(dialog.getByTestId('workspace-status')).toContainText('not a git repo');
-  await expect(dialog.getByRole('button', { name: 'Create project' })).toBeDisabled();
-  await dialog.getByRole('button', { name: 'Initialize git here' }).click();
-  await page.getByRole('alertdialog').getByRole('button', { name: 'Run git init' }).click();
-  await expect(dialog.getByTestId('workspace-status')).toContainText('Git repo');
+  await expect(dialog.getByLabel('Folder name', { exact: true })).toHaveValue(
+    'demo-plan-and-execute',
+  );
+  await dialog.getByLabel('Location', { exact: true }).fill(workspace);
+  const target = join(workspace, 'demo-plan-and-execute');
+  await expect(dialog.getByTestId('workspace-status')).toContainText(`Creates ${target}`);
   await shot(page, '20-new-project');
   await dialog.getByRole('button', { name: 'Create project' }).click();
   await expect(page).toHaveURL(/\/projects\/demo-plan-and-execute-[a-z0-9]{6}$/);
   const projectId = page.url().split('/').pop()!;
+  expect(existsSync(join(target, '.git'))).toBe(true);
   await expect(node(page, 'Task')).toBeVisible();
   await expect(node(page, 'Result')).toBeVisible();
 
@@ -372,10 +373,15 @@ test('save a workflow as a template and start a new project from it', async ({ p
     'aria-checked',
     'true',
   );
+  // An existing folder that is not a repo yet: git init is offered.
   const workspace = mkdtempSync(join(tmpdir(), 'app-e2e-workspace-'));
-  execFileSync('git', ['init', '-q'], { cwd: workspace });
   await create.getByLabel('Name', { exact: true }).fill('From template');
-  await create.getByLabel('Workspace', { exact: true }).fill(workspace);
+  await create.getByRole('radio', { name: 'Existing repo' }).click();
+  await create.getByLabel('Repo folder', { exact: true }).fill(workspace);
+  await expect(create.getByTestId('workspace-status')).toContainText('not a git repo');
+  await expect(create.getByRole('button', { name: 'Create project' })).toBeDisabled();
+  await create.getByRole('button', { name: 'Initialize git here' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Run git init' }).click();
   await expect(create.getByTestId('workspace-status')).toContainText('Git repo');
   await create.getByRole('button', { name: 'Create project' }).click();
   await expect(node(page, 'Template agent')).toBeVisible();

@@ -1,5 +1,6 @@
 import {
   kindFromPlural,
+  safeParseEntity,
   type ApiErrorBody,
   type DiffResponse,
   type DiscardBranchResponse,
@@ -19,7 +20,14 @@ import {
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import type { AppConfig } from './config.js';
 import { checkGitInstalled } from './git.js';
-import { checkWorkspace, expandPath, initWorkspace, suggestWorkspaces } from './workspace.js';
+import {
+  checkNewWorkspace,
+  checkWorkspace,
+  createWorkspace,
+  expandPath,
+  initWorkspace,
+  suggestWorkspaces,
+} from './workspace.js';
 import {
   BadRequestError,
   EntityValidationError,
@@ -135,6 +143,12 @@ export async function buildApp(
       initWorkspace(String(req.body?.path ?? ''), config.libraryDir),
   );
 
+  app.post<{ Body: { path?: unknown } | undefined }>(
+    '/api/workspace/check-new',
+    async (req): Promise<WorkspaceCheck> =>
+      checkNewWorkspace(String(req.body?.path ?? ''), config.libraryDir),
+  );
+
   app.get<{ Querystring: { path?: string } }>(
     '/api/workspace/suggest',
     async (req): Promise<WorkspaceSuggestions> => suggestWorkspaces(req.query.path ?? ''),
@@ -168,12 +182,46 @@ export async function buildApp(
     },
   );
 
-  app.post<{ Params: { kinds: string }; Body: unknown }>('/api/:kinds', async (req, reply) => {
-    const kind = kindParam(req.params.kinds);
-    const body = kind === 'project' ? await prepareProject(req.body) : req.body;
-    const result = await store.create(kind, body);
-    return reply.status(201).send(result);
-  });
+  /**
+   * Projects only: `?createWorkspace=1` creates the workspace folder and runs `git init` there,
+   * after the project itself was validated (so a rejected project leaves no folder behind).
+   */
+  async function createProjectWorkspace(body: unknown): Promise<unknown> {
+    const input = body && typeof body === 'object' ? body : {};
+    const raw = (input as { workspacePath?: unknown }).workspacePath;
+    const check = await checkNewWorkspace(typeof raw === 'string' ? raw : '', config.libraryDir);
+    if (check.status !== 'ok') {
+      throw new FieldError('invalid workspace', [
+        { path: ['workspacePath'], message: check.message ?? 'invalid workspace' },
+      ]);
+    }
+    const prepared = { ...input, workspacePath: check.path };
+    const valid = safeParseEntity('project', { ...prepared, id: 'project-aaaaaa' });
+    if (!valid.success) throw new EntityValidationError('invalid project', valid.error);
+    const created = await createWorkspace(check.path, config.libraryDir);
+    if (created.status !== 'ok') {
+      throw new FieldError('invalid workspace', [
+        { path: ['workspacePath'], message: created.message ?? 'could not create the folder' },
+      ]);
+    }
+    return prepared;
+  }
+
+  app.post<{ Params: { kinds: string }; Body: unknown; Querystring: { createWorkspace?: string } }>(
+    '/api/:kinds',
+    async (req, reply) => {
+      const kind = kindParam(req.params.kinds);
+      let body = req.body;
+      if (kind === 'project') {
+        body =
+          req.query.createWorkspace === '1'
+            ? await createProjectWorkspace(body)
+            : await prepareProject(body);
+      }
+      const result = await store.create(kind, body);
+      return reply.status(201).send(result);
+    },
+  );
 
   /** `?ref=` main (default), a version (`v2`), a branch (`draft`) or a commit hash. */
   app.get<{ Params: { kinds: string; id: string }; Querystring: { ref?: string } }>(

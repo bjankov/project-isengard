@@ -193,3 +193,14 @@ Open issues / questions:
 - **Forks are created right away.** If you fork and then discard your unsaved project changes, the fork branch stays in the library unused. It's invisible in the UI and harmless.
 - **Templates made from projects with forks** keep pinning those projects' fork branches.
 - **Performance with 100 nodes** isn't measured yet (M7).
+
+### M3 follow-up (2026-11-04)
+Built:
+- **New project creates its workspace folder.** **New folder** is the default: choose a location (remembered) and a folder name (follows the project name). The dialog shows the full path, and creating the project makes the folder and runs `git init`. **Existing repo** keeps the previous flow, including the `git init` offer.
+- `POST /api/workspace/check-new`, and `POST /api/projects?createWorkspace=1`, which validates the project before creating the folder.
+
+How to try it: **Projects → New project**, type a name, keep **New folder**, set a location (e.g. `~/code/`), Create. `ls -a <location>/<folder>` shows `.git`.
+
+Tests: 105 unit/API tests (2 new), 13 e2e tests (the demo workflow test now uses a new folder; the template test covers an existing folder with `git init`).
+
+Deviations from PLAN.md: none. PLAN.md 9.2 asks for a workspace path "validated as a git repo, with git init offered"; creating the folder is an addition.

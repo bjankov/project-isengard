@@ -887,6 +887,57 @@ describe('workspace', () => {
     expect(children.body.items.some((i) => i.path.endsWith('.hidden'))).toBe(false);
   });
 
+  it('checks where a new workspace folder would go', async () => {
+    await start();
+    const checkNew = (path: string) =>
+      api<WorkspaceCheck>('POST', '/api/workspace/check-new', { path }).then((r) => r.body);
+    expect(await checkNew(join(home, 'new', 'app'))).toEqual({
+      path: join(home, 'new', 'app'),
+      status: 'ok',
+    });
+    expect((await checkNew(workspace)).status).toBe('exists');
+    expect((await checkNew('relative')).status).toBe('not-absolute');
+    writeFileSync(join(home, 'file.txt'), 'x');
+    expect((await checkNew(join(home, 'file.txt', 'app'))).status).toBe('not-a-directory');
+    expect((await checkNew(join(config.libraryDir, 'agents', 'x'))).status).toBe('is-library');
+    expect(await checkNew(join(workspace, 'nested'))).toMatchObject({
+      status: 'ok',
+      warning: expect.stringContaining(workspace),
+    });
+  });
+
+  it('creates the workspace folder with a git repo together with the project', async () => {
+    await start();
+    const target = join(home, 'code', 'checkout');
+    const res = await api<{ entity: { workspacePath: string } }>(
+      'POST',
+      '/api/projects?createWorkspace=1',
+      { ...sampleInput('project'), workspacePath: target },
+    );
+    expect(res.status).toBe(201);
+    expect(res.body.entity.workspacePath).toBe(target);
+    expect(existsSync(join(target, '.git'))).toBe(true);
+
+    // The folder exists now, so the same request is refused.
+    const again = await api<{ issues: { path: string[] }[] }>(
+      'POST',
+      '/api/projects?createWorkspace=1',
+      { ...sampleInput('project'), workspacePath: target },
+    );
+    expect(again.status).toBe(400);
+    expect(again.body.issues).toMatchObject([{ path: ['workspacePath'] }]);
+
+    // An invalid project creates no folder.
+    const other = join(home, 'code', 'never');
+    const invalid = await api('POST', '/api/projects?createWorkspace=1', {
+      ...sampleInput('project'),
+      name: '',
+      workspacePath: other,
+    });
+    expect(invalid.status).toBe(400);
+    expect(existsSync(other)).toBe(false);
+  });
+
   it('requires projects to point at a git repo, checked on create and on path changes', async () => {
     await start();
     const project = sampleInput('project');

@@ -122,7 +122,9 @@ export type WorkspaceStatus =
   | 'not-a-directory'
   | 'not-a-repo'
   | 'inside-repo'
-  | 'is-library';
+  | 'is-library'
+  /** For a new folder: something already exists at the path. */
+  | 'exists';
 
 export interface WorkspaceCheck {
   /** The path as checked: `~` expanded, normalized, no trailing slash. */
@@ -132,6 +134,8 @@ export interface WorkspaceCheck {
   repoRoot?: string;
   /** Explanation for anything but `ok`. */
   message?: string;
+  /** Something worth knowing even when `ok`, e.g. a new repo nested inside another one. */
+  warning?: string;
 }
 
 /** `GET /api/workspace/suggest?path=`: folders matching a partly typed path. */

@@ -107,6 +107,19 @@ export const api = {
       body: JSON.stringify({ name, from }),
     }),
 
+  /** Create a project; with `createWorkspace` the server also creates its folder and git repo. */
+  createProject: (input: EntityInput<'project'>, opts: { createWorkspace?: boolean } = {}) =>
+    apiFetch<EntityMutationResponse<'project'>>(
+      `/projects${query({ createWorkspace: opts.createWorkspace ? '1' : undefined })}`,
+      { method: 'POST', body: JSON.stringify(input) },
+    ),
+
+  checkNewWorkspace: (path: string) =>
+    apiFetch<WorkspaceCheck>('/workspace/check-new', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
+
   checkWorkspace: (path: string) =>
     apiFetch<WorkspaceCheck>('/workspace/check', {
       method: 'POST',
