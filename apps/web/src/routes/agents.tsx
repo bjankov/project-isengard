@@ -1,4 +1,9 @@
-import { describeScope, type EntityInput, type Settings } from '@app/schema';
+import {
+  describeScope,
+  type EntityInput,
+  type EntityVersionSummary,
+  type Settings,
+} from '@app/schema';
 import { Bot, ShieldAlert, Sparkles } from 'lucide-react';
 import { Link, useParams } from 'react-router';
 import { AgentDefaultsFields, modelLabel } from '@/components/agent-defaults';
@@ -24,17 +29,31 @@ import {
   type EditorSourceReady,
 } from '@/hooks/use-entity-editor';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
-import { useEntities, useLibrary } from '@/stores/library';
+import { useEntities, useLibrary, useVersions } from '@/stores/library';
+import { DraftBadge } from '@/components/versioning';
 import { useSettings } from '@/stores/settings';
 
-/**
- * Version pinned by new references. Versioning arrives in M2, which tags each entity's
- * pre-existing state as v1 (see DECISIONS.md).
- */
-const PINNED_VERSION = 'v1';
+/** New references pin the target's current main version (never a floating "latest"). */
+function pinnedVersion(versions: Record<string, EntityVersionSummary>, id: string): string {
+  return versions[id]?.version ?? 'v1';
+}
+
+/** The version a reference pins, shown on its card. */
+function PinnedVersion({ version }: { version: string }) {
+  return (
+    <Badge
+      variant="outline"
+      className="rounded-md px-1.5 py-0 font-mono text-[11px] text-muted-foreground"
+      title={`Pinned to ${version}`}
+    >
+      {version}
+    </Badge>
+  );
+}
 
 export function AgentsLayout() {
   const agents = useEntities('agent');
+  const versions = useVersions('agent');
   const tools = useEntities('tool');
   const settings = useSettings();
   const error = useLibrary((s) => s.errors.agent);
@@ -65,6 +84,7 @@ export function AgentsLayout() {
                       {modelLabel(a.defaults.model, settings?.models ?? [])}
                     </Badge>
                     {unrestricted && <UnrestrictedShellBadge />}
+                    {versions[a.id]?.hasDraft && <DraftBadge />}
                   </>
                 ),
               };
@@ -121,6 +141,8 @@ function AgentEditor({
   const editor = useEntityEditor('agent', source);
   const skills = useEntities('skill');
   const tools = useEntities('tool');
+  const skillVersions = useVersions('skill');
+  const toolVersions = useVersions('tool');
   const { draft, errors, update } = editor;
   useSaveShortcut(() => void editor.save());
 
@@ -144,6 +166,7 @@ function AgentEditor({
         saving={editor.saving}
         onSave={() => void editor.save()}
         onDelete={editor.saved ? editor.remove : undefined}
+        versioning={editor.versioning}
       >
         {hasUnrestricted && <UnrestrictedShellBadge />}
       </EditorHeader>
@@ -197,7 +220,7 @@ function AgentEditor({
                   ...d,
                   skills: [
                     ...(d.skills ?? []),
-                    { kind: 'skill', id: skillId, version: PINNED_VERSION },
+                    { kind: 'skill', id: skillId, version: pinnedVersion(skillVersions, skillId) },
                   ],
                 }))
               }
@@ -221,6 +244,7 @@ function AgentEditor({
                     key={r.id}
                     icon={<Sparkles className="size-4" />}
                     title={skill?.name ?? r.id}
+                    badge={<PinnedVersion version={r.version} />}
                     subtitle={skill?.description}
                     href={`/skills/${r.id}`}
                     missing={skills !== undefined && !skill}
@@ -255,7 +279,7 @@ function AgentEditor({
                   ...d,
                   tools: [
                     ...(d.tools ?? []),
-                    { kind: 'tool', id: toolId, version: PINNED_VERSION },
+                    { kind: 'tool', id: toolId, version: pinnedVersion(toolVersions, toolId) },
                   ],
                 }))
               }
@@ -287,6 +311,7 @@ function AgentEditor({
                   key={ref.id}
                   icon={preset ? <BuiltinIcon id={preset.builtin} /> : undefined}
                   title={preset?.name ?? ref.id}
+                  badge={<PinnedVersion version={ref.version} />}
                   subtitle={preset ? <ScopeSummary preset={preset} /> : undefined}
                   href={`/tools/${ref.id}`}
                   missing={tools !== undefined && !preset}

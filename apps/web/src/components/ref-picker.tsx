@@ -108,9 +108,12 @@ export function RefCard({
   onRemove,
   extra,
   missing,
+  badge,
 }: {
   icon?: React.ReactNode;
   title: string;
+  /** Shown next to the title, e.g. the pinned version. */
+  badge?: React.ReactNode;
   subtitle?: React.ReactNode;
   href?: string;
   onRemove: () => void;
@@ -132,6 +135,7 @@ export function RefCard({
           ) : (
             <span className="truncate text-sm font-medium">{title}</span>
           )}
+          {badge}
           {missing && <span className="text-xs text-destructive">missing from library</span>}
         </div>
         {subtitle && <div className="mt-0.5 text-xs text-muted-foreground">{subtitle}</div>}

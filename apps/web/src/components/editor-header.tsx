@@ -1,4 +1,4 @@
-import { KIND_PLURALS, type EntityKind, type ReferencedErrorBody } from '@app/schema';
+import { KIND_PLURALS, draftOf, type EntityKind, type ReferencedErrorBody } from '@app/schema';
 import { Loader2, Save, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router';
@@ -14,6 +14,8 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { VersionActions, VersionIndicator } from '@/components/versioning';
+import type { Versioning } from '@/hooks/use-entity-editor';
 
 interface EditorHeaderProps {
   title: string;
@@ -27,6 +29,8 @@ interface EditorHeaderProps {
   children?: React.ReactNode;
   /** Extra controls shown before Delete/Save. */
   actions?: React.ReactNode;
+  /** Version badge, branch indicator, history, merge and discard (versioned entities). */
+  versioning?: Versioning;
 }
 
 const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
@@ -40,6 +44,7 @@ export function EditorHeader({
   onDelete,
   children,
   actions,
+  versioning,
 }: EditorHeaderProps) {
   const [confirming, setConfirming] = useState(false);
   const [blockedBy, setBlockedBy] = useState<ReferencedErrorBody['references']>([]);
@@ -68,10 +73,12 @@ export function EditorHeader({
               <TooltipContent>Unsaved changes</TooltipContent>
             </Tooltip>
           )}
+          {versioning && <VersionIndicator versioning={versioning} />}
           {children}
         </div>
       </div>
       {actions}
+      {versioning && <VersionActions versioning={versioning} />}
       {onDelete && (
         <Button variant="ghost" size="sm" onClick={() => setConfirming(true)}>
           <Trash2 />
@@ -95,7 +102,9 @@ export function EditorHeader({
               <AlertDialogHeader>
                 <AlertDialogTitle>Delete “{title}”?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  It is removed from the library. Its history stays in git.
+                  It is removed from the library
+                  {versioning && draftOf(versioning.status) ? ', and its draft is discarded' : ''}.
+                  Its versions stay in the git history.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
