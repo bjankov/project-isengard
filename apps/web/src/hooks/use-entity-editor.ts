@@ -1,12 +1,16 @@
 import {
+  DRAFT_BRANCH,
   KIND_PLURALS,
+  draftOf,
+  normalizeMergeNote,
   safeParseEntity,
   type EntityByKind,
   type EntityInput,
   type EntityKind,
   type ReferencedErrorBody,
+  type VersionStatus,
 } from '@app/schema';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { SKIP_GUARD } from '@/components/unsaved-changes-guard';
@@ -28,11 +32,25 @@ const same = sameData;
 export type EditorSource<K extends EntityKind> =
   | { state: 'loading' }
   | { state: 'notFound' }
-  | { state: 'ready'; saved: EntityByKind[K] | undefined; input: EntityInput<K> };
+  | {
+      state: 'ready';
+      /** What the editor starts from: the draft if there is one, otherwise main. */
+      saved: EntityByKind[K] | undefined;
+      input: EntityInput<K>;
+      /** Undefined for a new entity, or when the version state could not be loaded. */
+      status: VersionStatus | undefined;
+    };
+
+interface LoadedVersions<K extends EntityKind> {
+  key: string;
+  status?: VersionStatus;
+  draft?: EntityByKind[K];
+}
 
 /**
- * Resolves what an editor starts from: the stored entity for `id`, or `makeNew()` for a new
- * one. Editors mount only once this is `ready`, so they can initialise state directly.
+ * Resolves what an editor starts from: the entity's draft when it has one, otherwise its main
+ * version, or `makeNew()` for a new entity. Editors mount only once this is `ready`, so they
+ * can initialise state directly.
  */
 export function useEditorSource<K extends EntityKind>(
   kind: K,
@@ -40,22 +58,73 @@ export function useEditorSource<K extends EntityKind>(
   makeNew: () => EntityInput<K> | undefined,
 ): EditorSource<K> {
   const list = useEntities(kind);
+  const key = id === undefined ? undefined : `${kind}/${id}`;
+  const [loaded, setLoaded] = useState<LoadedVersions<K>>();
+
+  useEffect(() => {
+    if (key === undefined || id === undefined) return;
+    let cancelled = false;
+    void (async () => {
+      let status: VersionStatus | undefined;
+      let draft: EntityByKind[K] | undefined;
+      try {
+        status = await api.versions(kind, id);
+        if (draftOf(status)) draft = await api.get(kind, id, DRAFT_BRANCH);
+      } catch (err) {
+        // Not found is shown from the list below; otherwise edit main without version info.
+        if (!(err instanceof ApiError && err.status === 404)) {
+          toast.error('Could not load versions', {
+            description: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      if (!cancelled) setLoaded({ key, status, draft });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [kind, id, key]);
+
   if (id === undefined) {
     const input = makeNew();
-    return input ? { state: 'ready', saved: undefined, input } : { state: 'loading' };
+    return input
+      ? { state: 'ready', saved: undefined, input, status: undefined }
+      : { state: 'loading' };
   }
   if (!list) return { state: 'loading' };
   const stored = list.find((e) => e.id === id);
-  return stored
-    ? { state: 'ready', saved: stored, input: withoutId<K>(stored) }
-    : { state: 'notFound' };
+  if (!stored) return { state: 'notFound' };
+  if (!loaded || loaded.key !== key) return { state: 'loading' };
+  const saved = loaded.draft ?? stored;
+  return { state: 'ready', saved, input: withoutId<K>(saved), status: loaded.status };
 }
 
 export type EditorSourceReady<K extends EntityKind> = Extract<EditorSource<K>, { state: 'ready' }>;
 
+export type MergeOutcome = 'merged' | 'conflict' | 'failed';
+
+/** Version state and actions of an editor, shown in its header. */
+export interface Versioning {
+  kind: EntityKind;
+  /** Undefined until the entity has been created. */
+  id: string | undefined;
+  name: string;
+  status: VersionStatus | undefined;
+  /** Unsaved changes in the editor. */
+  dirty: boolean;
+  busy: boolean;
+  /**
+   * Merge the draft to main, with an optional note on what changed. `force` merges even if
+   * main changed since the draft started.
+   */
+  merge: (opts?: { force?: boolean; note?: string }) => Promise<MergeOutcome>;
+  /** Delete the draft and go back to main. */
+  discard: () => Promise<void>;
+}
+
 export interface EntityEditor<K extends EntityKind> {
   draft: EntityInput<K>;
-  /** The saved entity; undefined for a new one. */
+  /** The last saved state (the draft branch if there is one, else main); undefined for a new one. */
   saved: EntityByKind[K] | undefined;
   isNew: boolean;
   dirty: boolean;
@@ -65,21 +134,30 @@ export interface EntityEditor<K extends EntityKind> {
   save: () => Promise<void>;
   /** Resolves to the blocking references when the delete is refused (409). */
   remove: () => Promise<ReferencedErrorBody['references'] | undefined>;
+  versioning: Versioning;
 }
 
 /**
- * Draft state for a library entity editor: tracks unsaved changes, validates with the shared
- * Zod schema and saves through the API.
+ * State for a library entity editor: tracks unsaved changes, validates with the shared Zod
+ * schema, saves through the API (creating on main, then committing to the draft branch) and
+ * merges or discards the draft.
  */
 export function useEntityEditor<K extends EntityKind>(
   kind: K,
-  source: { saved: EntityByKind[K] | undefined; input: EntityInput<K> },
+  source: {
+    saved: EntityByKind[K] | undefined;
+    input: EntityInput<K>;
+    status: VersionStatus | undefined;
+  },
 ): EntityEditor<K> {
   const navigate = useNavigate();
   const upsert = useLibrary((s) => s.upsert);
+  const setVersion = useLibrary((s) => s.setVersion);
   const removeFromStore = useLibrary((s) => s.remove);
 
   const [saved, setSaved] = useState<EntityByKind[K] | undefined>(source.saved);
+  const [status, setStatusState] = useState<VersionStatus | undefined>(source.status);
+  const [busy, setBusy] = useState(false);
   const [baseline, setBaseline] = useState<EntityInput<K>>(source.input);
   const [draft, setDraft] = useState<EntityInput<K>>(source.input);
   const [submitted, setSubmitted] = useState(false);
@@ -100,6 +178,25 @@ export function useEntityEditor<K extends EntityKind>(
     [serverErrors, clientErrors],
   );
 
+  /** Keep the editor's status and the list's version badge in step. */
+  const setStatus = useCallback(
+    (id: string, next: VersionStatus) => {
+      setStatusState(next);
+      setVersion(kind, id, { version: next.current, hasDraft: !!draftOf(next) });
+    },
+    [kind, setVersion],
+  );
+
+  /** Reset the editor to a saved entity. */
+  const resetTo = useCallback((entity: EntityByKind[K]) => {
+    const input = withoutId<K>(entity);
+    setSaved(entity);
+    setBaseline(input);
+    setDraft(input);
+    setServerErrors({});
+    setSubmitted(false);
+  }, []);
+
   const update = useCallback((fn: (d: EntityInput<K>) => EntityInput<K>) => {
     setServerErrors({});
     setDraft(fn);
@@ -116,14 +213,12 @@ export function useEntityEditor<K extends EntityKind>(
     setSaving(true);
     try {
       const res = saved ? await api.update(kind, saved.id, draft) : await api.create(kind, draft);
-      const input = withoutId<K>(res.entity);
-      upsert(kind, res.entity);
-      setSaved(res.entity);
-      setBaseline(input);
-      setDraft(input);
-      setServerErrors({});
-      setSubmitted(false);
-      toast.success(res.commit ? `Saved “${res.entity.name}”` : 'No changes to save', {
+      // Creating writes main; updating only writes the draft, so the list (main) stays.
+      if (!saved) upsert(kind, res.entity);
+      setStatus(res.entity.id, res.status);
+      resetTo(res.entity);
+      const where = saved ? 'to the draft' : `as ${res.status.current ?? 'v1'}`;
+      toast.success(res.commit ? `Saved “${res.entity.name}” ${where}` : 'No changes to save', {
         description: res.commit ? `Commit ${res.commit.hash.slice(0, 7)}` : undefined,
       });
       if (!saved) {
@@ -144,7 +239,57 @@ export function useEntityEditor<K extends EntityKind>(
     } finally {
       setSaving(false);
     }
-  }, [draft, saving, kind, saved, upsert, navigate]);
+  }, [draft, saving, kind, saved, upsert, navigate, setStatus, resetTo]);
+
+  const merge = useCallback(
+    async ({
+      force = false,
+      note,
+    }: { force?: boolean; note?: string } = {}): Promise<MergeOutcome> => {
+      if (!saved || busy) return 'failed';
+      setBusy(true);
+      try {
+        const res = await api.merge(kind, saved.id, { force, note: normalizeMergeNote(note) });
+        upsert(kind, res.entity);
+        setStatus(res.entity.id, res.status);
+        setSaved(res.entity);
+        toast.success(`Merged “${res.entity.name}” as ${res.version}`, {
+          description: `Commit ${res.commit.hash.slice(0, 7)}`,
+        });
+        return 'merged';
+      } catch (err) {
+        if (err instanceof ApiError && err.body?.error === 'merge_conflict') return 'conflict';
+        toast.error('Could not merge', {
+          description: err instanceof Error ? err.message : String(err),
+        });
+        return 'failed';
+      } finally {
+        setBusy(false);
+      }
+    },
+    [saved, busy, kind, upsert, setStatus],
+  );
+
+  const discard = useCallback(async () => {
+    if (!saved || busy) return;
+    setBusy(true);
+    try {
+      const res = await api.discardBranch(kind, saved.id, DRAFT_BRANCH);
+      const main = await api.get(kind, saved.id);
+      upsert(kind, main);
+      setStatus(saved.id, res.status);
+      resetTo(main);
+      toast.success('Draft discarded', {
+        description: res.status.current ? `Back to ${res.status.current}` : undefined,
+      });
+    } catch (err) {
+      toast.error('Could not discard the draft', {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }, [saved, busy, kind, upsert, setStatus, resetTo]);
 
   const remove = useCallback(async () => {
     if (!saved) return undefined;
@@ -173,5 +318,15 @@ export function useEntityEditor<K extends EntityKind>(
     update,
     save,
     remove,
+    versioning: {
+      kind,
+      id: saved?.id,
+      name: saved?.name ?? '',
+      status,
+      dirty,
+      busy,
+      merge,
+      discard,
+    },
   };
 }

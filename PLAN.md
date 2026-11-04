@@ -314,7 +314,10 @@ When a user opens a project or template containing an instance pinned to an olde
 
 - The 10 built-in patterns and seeded demo content are ordinary editable, deletable entities.
 - **Settings → Restore defaults** re-adds any missing built-in pattern without touching edited ones **[default]**.
-- **Deleting an entity that is still referenced:** show the list of references and require confirmation. Referencing instances keep working by converting to local copies **[default]**.
+- **Deleting an entity that is still referenced** by a versioned entity (a version on main): show the list of references and require confirmation. For the referencing entities, the user chooses, for all at once or for each one individually:
+  - **Keep as local copy:** the referencing entity embeds a copy of the deleted entity's content and keeps working.
+  - **Replace with a placeholder:** the reference is removed. A placeholder shows that a referenced entity (last known name and version) was deleted.
+- **References that exist only on a draft branch** don't count: the entity is deleted without a prompt. A draft is not materialized yet, so a dangling reference on it is acceptable; the editor shows it as missing.
 
 ## 9. UI and UX
 
@@ -344,7 +347,7 @@ Every entity editor shows the version and branch state, plus access to history a
 - Add nodes from a palette and from a quick-add command palette (`Cmd/Ctrl+K`).
 - Drag to connect; invalid connections are prevented with an explanation (e.g. a Note cannot be connected).
 - **Inspector side panel** for the selected node or edge. It shows all configuration from section 7, including context mode and its settings for edges, and overrides for agent nodes (clearly separated from fields that would fork).
-- Undo/redo, multi-select, copy/paste, minimap, zoom-to-fit, autosave of the draft branch.
+- Undo/redo, multi-select, copy/paste, minimap, zoom-to-fit. Saving is explicit (Save / Ctrl+S, commits to the draft branch) with an unsaved-changes guard, like every other editor. Autosave is deferred to v2.
 - Distinct visual language:
   - Decision nodes as diamonds.
   - Back-edges curved with an iteration-cap badge.

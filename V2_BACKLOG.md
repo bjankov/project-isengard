@@ -37,6 +37,7 @@ Add to this file whenever something is deferred. `PLAN.md` stays the source of t
 |---|---|---|---|
 | 2026-11-04 | M1 | Drag-to-reorder an agent's skills and tools | No functional effect in v1. In v2 the order decides how they appear in the agent's context. The order is already stored (arrays), so no schema change is needed. |
 | 2026-11-04 | M1 | Skill folder names when handing skills to an agent runtime | The Agent Skills format expects the folder name to match `name`. Library folders are named by id (`<slug>-<suffix>`), so v2 should write correctly named folders when it gives skills to an agent. |
+| 2026-11-04 | M2 | Canvas autosave | PLAN.md 9.3 originally had autosave of the draft branch. Dropped for v1 in favour of explicit Save, for consistency with every other editor and a clean git history. If added in v2, decide how often it commits (e.g. after a few idle seconds) and group autosaves in the history. |
 
 ## Open questions for v2
 - How should a skill's `allowed-tools` frontmatter interact with the agent's tool presets? Ignore it, warn when they disagree, or intersect the two? In v1, tool access comes only from presets.

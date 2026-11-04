@@ -228,7 +228,7 @@ test('skills: advanced frontmatter via the form and via raw SKILL.md', async ({ 
   await expect(page.getByLabel('License', { exact: true })).toHaveValue('');
   await save(page, 'pdf-tools');
 
-  const edited = await (await page.request.get(`/api/skills/${skillId}`)).json();
+  const edited = await (await page.request.get(`/api/skills/${skillId}?ref=draft`)).json();
   expect(edited).toMatchObject({
     description: 'PDFs only',
     compatibility: 'Needs network',

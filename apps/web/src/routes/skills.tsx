@@ -26,7 +26,8 @@ import {
 import { useBooleanPreference } from '@/hooks/use-preference';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { cn } from '@/lib/utils';
-import { useEntities, useLibrary } from '@/stores/library';
+import { useEntities, useLibrary, useVersions } from '@/stores/library';
+import { DraftBadge } from '@/components/versioning';
 
 /** Agent Skills names: lowercase letters, digits and single hyphens. Normalised as you type. */
 export function toSkillName(raw: string): string {
@@ -41,6 +42,7 @@ export function toSkillName(raw: string): string {
 
 export function SkillsLayout() {
   const skills = useEntities('skill');
+  const versions = useVersions('skill');
   const error = useLibrary((s) => s.errors.skill);
   return (
     <LibraryLayout
@@ -57,6 +59,7 @@ export function SkillsLayout() {
               description: s.description,
               href: `/skills/${s.id}`,
               icon: <Sparkles className="size-4" />,
+              extra: versions[s.id]?.hasDraft ? <DraftBadge /> : undefined,
             })),
             empty: 'No skills yet.',
           },
@@ -166,6 +169,7 @@ function SkillEditor({ source }: { source: EditorSourceReady<'skill'> }) {
         saving={editor.saving}
         onSave={save}
         onDelete={editor.saved ? editor.remove : undefined}
+        versioning={editor.versioning}
         actions={
           <>
             {advanced && (

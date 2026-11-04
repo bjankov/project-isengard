@@ -119,3 +119,47 @@ Format: date, milestone, decision, reason.
 - **`V2_BACKLOG.md` collects everything deferred to v2.** CLAUDE.md now says to add to it whenever something is deferred.
 - **Deferred to v2:** drag-to-reorder an agent's skills and tools. It has no functional effect in v1, and the order is already stored.
 - **Bundle size:** no action, by the user's decision.
+
+## 2026-11-04 (M2)
+
+### Versioning mechanism
+- **Plumbing, not `git worktree`** (the PLAN.md 8.1 choice). Every commit is built on a temporary index (`read-tree`, `hash-object`, `update-index`, `write-tree`, `commit-tree`). Refs move with one atomic `git update-ref --stdin` transaction.
+  - Reasons:
+    - nothing is ever checked out, so editing one entity can never touch another
+    - no per-branch checkouts to create and clean up
+    - a merge, its version tag and deleting the draft happen together or not at all
+- **All writes use plumbing,** including creates, deletes and settings on `main`. After `main` moves, only the touched paths of the working tree are synced. The library folder stays a readable mirror of `main`, and `git status` stays clean.
+- **Main versions are lightweight tags** `<kind>/<id>/v<n>`. An entity's current version is its highest tag. **Branches** are `<kind>/<id>/<branch>`.
+
+### Drafts and merging
+- **Every library kind is versioned this way,** including patterns, templates and projects. Whether project canvas autosave (M3) should commit to a draft is left to M3.
+- **Creating an entity commits it to `main` and tags `v1`.** Only edits go through a draft. Reason: new entities can be referenced right away, and the done-when ("merging creates v2") follows naturally.
+- **One automatic `draft` branch per entity.** The first save creates it from the current `main`; later saves add commits to it. A save that changes nothing makes no commit and creates no branch. Named branches arrive with forks in M5; the API and history already handle any branch name.
+- **Merge** gives `main` the entity's files exactly as they are on the draft:
+  - it is a two-parent merge commit, `Merge agent <id> (<name>) as v3`
+  - other entities on `main` are untouched, so a draft started before another entity was merged is not a conflict
+  - the next version is tagged and the draft is deleted
+- **Merge conflicts:** a merge is refused (`409 merge_conflict`) when `main`'s copy of the entity changed since the draft started. With one draft per entity this only happens through edits made outside the app. `force: true` merges anyway, replacing `main`'s copy.
+- **Merging a draft identical to `main`** is refused (`400 bad_request`); the UI offers Discard instead.
+- **Deleting an entity also deletes its branches.** Version tags stay, so old versions remain in git history.
+- **Existing entities are tagged `v1` on startup.** This covers entities from M0/M1 and files added by hand. It keeps the `v1` pins from M1 valid.
+- **Settings are not versioned.** They commit straight to `main`; PLAN.md 8 does not list them.
+
+### Reads and the index
+- **Reads accept `?ref=`:** `main` (the default), a version (`v2`), a branch (`draft`) or a commit hash. History and diff use the same resolution.
+- **The index reflects `main` only.** Lists show `main`'s content plus each entity's version and a draft flag. These come from the git refs on each request and are not stored in the index.
+- **Deleting is checked against references on `main` only.** A reference that exists only on a draft does not block deleting its target. M6 owns the deletion-with-references flow.
+- **History** lists main versions (from the tags) and each branch's unmerged commits. A version's date and message come from the commit on `main` that last changed the entity (`git log --first-parent`), so a migrated `v1` shows its real last edit.
+- **Diff** returns the raw files (YAML or SKILL.md) that differ, before and after. The raw text is what is stored and versioned.
+
+### M2 follow-up (2026-11-04)
+- **Deleting referenced entities (PLAN.md 8.4 updated, built in M6):**
+  - only references from versions on `main` count; references that exist only on a draft never block or prompt
+  - the user confirms, then chooses for the referencing entities, for all at once or for each one: keep as a local copy, or replace with a "deleted" placeholder showing the last known name and version
+  - Reason: user decision. A draft is not materialized, so a dangling reference there is acceptable.
+  - Until M6, deleting an entity referenced from `main` stays blocked.
+- **Merge notes:** merging takes an optional one-line note ("What changed?", at most 200 characters, whitespace collapsed).
+  - It is stored as the body of the merge commit, so it lives in git with no extra file.
+  - The history shows it under the version instead of the generic "Merged from the draft".
+  - M6 update notifications can list the notes between two versions as a changelog.
+- **No canvas autosave in v1 (PLAN.md 9.3 updated).** The canvas saves explicitly (Save / Ctrl+S, to the draft branch) with the unsaved-changes guard, like every other editor. Reason: user decision. It keeps editors consistent and git history clean, and saving is already safe because `main` only changes on merge. Autosave is in `V2_BACKLOG.md`.

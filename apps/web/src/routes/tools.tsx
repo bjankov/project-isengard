@@ -28,7 +28,8 @@ import {
   type EditorSourceReady,
 } from '@/hooks/use-entity-editor';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
-import { useEntities, useLibrary } from '@/stores/library';
+import { useEntities, useLibrary, useVersions } from '@/stores/library';
+import { DraftBadge } from '@/components/versioning';
 
 type ToolInput = EntityInput<'tool'>;
 
@@ -59,6 +60,7 @@ function parsePreset(input: ToolInput): ToolPreset | undefined {
 
 export function ToolsLayout() {
   const presets = useEntities('tool');
+  const versions = useVersions('tool');
   const error = useLibrary((s) => s.errors.tool);
   return (
     <LibraryLayout
@@ -77,7 +79,13 @@ export function ToolsLayout() {
               description: describeScope(p).unrestricted ? '' : describeScope(p).summary,
               href: `/tools/${p.id}`,
               icon: <BuiltinIcon id={p.builtin} />,
-              extra: describeScope(p).unrestricted ? <UnrestrictedShellBadge /> : undefined,
+              extra:
+                describeScope(p).unrestricted || versions[p.id]?.hasDraft ? (
+                  <>
+                    {describeScope(p).unrestricted && <UnrestrictedShellBadge />}
+                    {versions[p.id]?.hasDraft && <DraftBadge />}
+                  </>
+                ) : undefined,
             })),
           },
           {
@@ -250,6 +258,7 @@ function ToolEditor({ source }: { source: EditorSourceReady<'tool'> }) {
         saving={editor.saving}
         onSave={() => void editor.save()}
         onDelete={editor.saved ? editor.remove : undefined}
+        versioning={editor.versioning}
       >
         {unrestricted && <UnrestrictedShellBadge />}
       </EditorHeader>
