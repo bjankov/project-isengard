@@ -287,3 +287,24 @@ Format: date, milestone, decision, reason.
 ### Before the milestone
 - **better-sqlite3 is no longer in `onlyBuiltDependencies`.** Version 13 ships prebuilt binaries for every platform and has no install script. Listing it made pnpm run an implicit `node-gyp rebuild` (the package contains `binding.gyp`), which fails when `node-gyp` isn't installed. pnpm now prints an "Ignored build scripts" warning on install; it is harmless, and `pnpm approve-builds` must not be used for it.
 - **Server tests resolve their temp folder with `realpathSync`.** On macOS `/var` links to `/private/var`, and git reports repo roots in resolved form, so the `inside-repo` test failed there (development was on Fedora until now). The app's behaviour is unchanged: the "Use <repo root>" suggestion shows the resolved path when the typed path goes through a symlink. User decision: fix only the test for now; the display issue is in `V2_BACKLOG.md` to revisit before release.
+
+### Agreed at planning (user decisions)
+- **"Choose N" uses repeat groups.** A pattern marks groups of nodes as repeatable (`repeat: [{id, label, nodes, mode, min, max, default}]` in `pattern.yaml`); an instance stores its chosen N per group (`repeat` on the pattern node). Choosing N never forks.
+- **Joins on pattern ports:** `portJoins` on the instance, one join mode per input port.
+- **Fork internals are edited in the pattern editor** on the fork branch (like **Edit fork** for agents), not inside the expanded frame. Expanded stays view state only.
+- **Overrides for agents inside instances** are keyed by node path (`review-k2f8/maker`).
+- **Every input port is required; output ports are optional.** No per-port setting in v1.
+
+### Schema
+- **Node paths** (`NodePath`) name nodes inside instances: node ids joined by `/`, with `@k` for the k-th copy of a repeated node (`team@1/worker@2`). The first segment is always the node of the outer graph. They key slot bindings (relative to the pattern) and project overrides (relative to the workflow).
+- **Repeat group semantics** (`expandRepeats`):
+  - edges inside the group are copied per copy
+  - `parallel` (default): edges into and out of the group connect every copy (fan-out, fan-in); a decision exit leading into the group becomes one exit per copy (`worker@2`, "Worker 2") with the same cap
+  - `chain`: copy 1 gets the group's inputs, the last copy feeds its outputs, and copy k hands over to copy k+1 like the group's input edges describe (Pipeline)
+  - copied slots are numbered ("Worker 2"); counts are clamped to `min`..`max`
+- **Slots of nested patterns are slots of the outer pattern** under the nested node's path (`team@1/worker@2`). Inside a pattern, a nested instance's `slot` binding only renames a slot (role, description, default agent); concrete agents there are an error.
+- **Validation flattens instances** (`flattenWorkflow`, `checkWorkflow`): every instance is replaced by its repeat-expanded nodes with the bound agents filled in, so loops, joins, reachability and tool coverage work across pattern boundaries without new rule code. Problems are mapped back onto the instance (message prefixed "In <pattern>:"), with the inner paths kept for expanded views; fixes inside a pattern are dropped (they're fixed in the pattern), except a missing port join, fixed on the instance.
+- **A pattern is checked as it will be used:** in the pattern editor, repeat groups are expanded to their default size and problems on copies are mapped back to the template nodes. Otherwise the Router template ("one exit") would warn.
+- **New rules:** `slot-in-workflow`, `agent-in-pattern`, `unbound-slot`, `port-unconnected`, `unknown-port` (an edge to a port that doesn't exist or points the wrong way), `pattern-cycle` (blocks saving, like an endless loop), `repeat-invalid`, and `missing-ref` for patterns. An instance counts as unreachable only when all of it is.
+- **Reading a shared store doesn't form a loop** (`analyzeLoops`). An agent that writes the store and reads it back is not looping: a read is access to state, not a trigger. Same reasoning as the M4 join rule (PLAN.md 7.5). Found because Moderated discussion and Blackboard did this.
+- **Built-in patterns** are data in `packages/schema` (`BUILTIN_PATTERNS`) with fixed ids `<slug>-builtn`, so Restore defaults (M6) can recognise them. Routing decisions that follow an agent's choice (Supervisor, Hierarchy, Handoff, discussion, Blackboard) are deterministic: the agent ends its reply with `{"next": "<label>"}` and a few lines of Python print that exit. Router uses an agent evaluator (a slot), Maker-checker a deterministic verdict check. Loop caps: 5 per worker exit, 8 per discussion or blackboard turn exit, 3 for Maker-checker. No default agents: the demo agents arrive in M7.

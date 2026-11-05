@@ -1,10 +1,33 @@
 import { z } from 'zod';
 import { Agent, AgentDefaults, AgentOverride, ModelRef } from './agent.js';
-import { EntityKind, EntityMeta, LocalId, type Ref } from './ids.js';
+import { EntityKind, EntityMeta, LocalId, NodePath, type Ref } from './ids.js';
 import { Skill } from './skill.js';
 import { ToolPreset } from './tool.js';
 import { Layout, WorkflowGraph } from './workflow/graph.js';
 import type { AgentBinding, WorkflowNode } from './workflow/nodes.js';
+
+/**
+ * A group of pattern nodes that an instance copies N times ("Worker 1…N", PLAN.md 10). How
+ * the copies are wired is defined by `expandRepeats`. Edges inside the group are copied per
+ * copy. `parallel`: edges into or out of the group connect every copy, and a decision exit
+ * leading into the group becomes one exit per copy. `chain`: copies run one after another
+ * (copy 1 gets the group's inputs, the last copy feeds its outputs).
+ */
+export const RepeatGroup = z
+  .object({
+    id: LocalId,
+    /** Shown in the insert dialog, e.g. "Workers". */
+    label: z.string().trim().min(1).max(100),
+    nodes: z.array(LocalId).min(1),
+    mode: z.enum(['parallel', 'chain']).default('parallel'),
+    min: z.int().positive().default(1),
+    max: z.int().positive().default(9),
+    default: z.int().positive().default(2),
+  })
+  .refine((g) => g.min <= g.default && g.default <= g.max, {
+    message: 'expected min <= default <= max',
+  });
+export type RepeatGroup = z.infer<typeof RepeatGroup>;
 
 /**
  * A reusable sub-graph. Input/Output nodes are its ports; agent nodes bound to slots are its
@@ -13,6 +36,7 @@ import type { AgentBinding, WorkflowNode } from './workflow/nodes.js';
 export const Pattern = EntityMeta.extend({
   workflow: WorkflowGraph,
   layout: Layout,
+  repeat: z.array(RepeatGroup).default([]),
 });
 export type Pattern = z.infer<typeof Pattern>;
 
@@ -27,8 +51,11 @@ export type Template = z.infer<typeof Template>;
 export const Project = EntityMeta.extend({
   /** Absolute path of the workspace git repo (validated by the server). */
   workspacePath: z.string().trim().min(1),
-  /** Overrides keyed by agent-node id. */
-  overrides: z.record(LocalId, AgentOverride).default({}),
+  /**
+   * Overrides keyed by agent-node id, or by node path for agents inside pattern instances
+   * (`review-k2f8/maker`, `team-a1b2/worker@2`).
+   */
+  overrides: z.record(NodePath, AgentOverride).default({}),
   workflow: WorkflowGraph,
   layout: Layout,
 });

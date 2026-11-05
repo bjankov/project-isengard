@@ -9,6 +9,7 @@ import { isUnrestrictedShell, type ToolPreset } from '../tool.js';
 import { analyzeLoops, exitOf, joinInputs, traceOrigin, type LoopAnalysis } from './editing.js';
 import type { WorkflowGraph } from './graph.js';
 import type { WorkflowNode } from './nodes.js';
+import type { PatternLookup } from './patterns.js';
 
 /**
  * Looks up the pinned library entities a workflow uses. Returns the entity, `null` when it
@@ -17,6 +18,8 @@ import type { WorkflowNode } from './nodes.js';
 export interface WorkflowResolver {
   agent(ref: AgentRef): Agent | null | undefined;
   tool(ref: ToolRef): ToolPreset | null | undefined;
+  /** Pinned patterns. Without it, pattern instances are checked as opaque nodes. */
+  pattern?: PatternLookup;
 }
 
 export type ProblemRule =
@@ -34,12 +37,20 @@ export type ProblemRule =
   | 'write-not-covered'
   | 'reference-not-file'
   | 'reference-not-covered'
-  | 'unrestricted-shell';
+  | 'unrestricted-shell'
+  | 'slot-in-workflow'
+  | 'agent-in-pattern'
+  | 'unbound-slot'
+  | 'port-unconnected'
+  | 'unknown-port'
+  | 'pattern-cycle'
+  | 'repeat-invalid';
 
 /** A one-click fix the editor can offer. Apply it with `applyFix`. */
 export type ProblemFix =
   | { kind: 'join-all'; node: string }
-  | { kind: 'cap-exit'; node: string; exit: string; max: number };
+  | { kind: 'cap-exit'; node: string; exit: string; max: number }
+  | { kind: 'port-join-all'; node: string; port: string };
 
 export interface WorkflowProblem {
   /** Stable while the problem exists, e.g. `missing-join:agent-k2f8`. */
@@ -55,6 +66,20 @@ export interface WorkflowProblem {
   /** Errors block merging; these also block saving (PLAN.md 7.4: uncapped loops). */
   blocksSave: boolean;
   fix?: ProblemFix & { label: string };
+  /**
+   * For problems inside pattern instances: the flattened node and edge paths affected
+   * (`review-k2f8/maker`), so an expanded instance can highlight them. `nodes` and `edges`
+   * then name the instance node.
+   */
+  inner?: { nodes: string[]; edges: string[] };
+}
+
+export interface ValidateOptions {
+  /** A workflow (projects, templates) uses concrete agents; a pattern uses slots. */
+  kind?: 'workflow' | 'pattern';
+  loops?: LoopAnalysis;
+  /** Boundary ports of inlined pattern instances: content passes through them. */
+  ports?: ReadonlySet<string>;
 }
 
 type DecisionNode = Extract<WorkflowNode, { type: 'decision' }>;
@@ -82,7 +107,7 @@ export function nodeName(node: WorkflowNode, resolver?: WorkflowResolver): strin
     case 'humanInput':
       return 'Human input';
     case 'pattern':
-      return 'Pattern';
+      return resolver?.pattern?.(node.pattern)?.name ?? 'Pattern';
     case 'note':
       return 'Note';
   }
@@ -130,8 +155,10 @@ function pathScopes(tools: readonly ToolPreset[], builtins: readonly string[]): 
 export function validateWorkflow(
   graph: WorkflowGraph,
   resolver?: WorkflowResolver,
-  loops: LoopAnalysis = analyzeLoops(graph),
+  options: ValidateOptions = {},
 ): WorkflowProblem[] {
+  const { kind = 'workflow', ports = new Set<string>() } = options;
+  const loops = options.loops ?? analyzeLoops(graph);
   const problems: WorkflowProblem[] = [];
   const nodes = new Map(graph.nodes.map((n) => [n.id, n]));
   const name = (id: string) => {
@@ -156,15 +183,51 @@ export function validateWorkflow(
   };
 
   // ---- Structure ----
-  const inputs = graph.nodes.filter((n) => n.type === 'input');
+  const inputs = graph.nodes.filter((n) => n.type === 'input' && !ports.has(n.id));
   if (inputs.length === 0) {
     add({
       rule: 'no-input',
       severity: 'error',
-      message: 'The workflow has no Input. Add one: it is where the work starts.',
+      message:
+        kind === 'pattern'
+          ? 'The pattern has no Input. Add one: it becomes the port where work comes in.'
+          : 'The workflow has no Input. Add one: it is where the work starts.',
       nodes: [],
       edges: [],
     });
+  }
+
+  // Workflows use concrete agents; patterns use slots (bound when the pattern is inserted).
+  // Nodes inside pattern instances (paths with "/") are checked through their instance.
+  for (const node of graph.nodes) {
+    if (node.id.includes('/')) continue;
+    const binding =
+      node.type === 'agent'
+        ? node.binding
+        : node.type === 'decision' && node.evaluator.type === 'agent'
+          ? node.evaluator.agent
+          : undefined;
+    if (!binding) continue;
+    const who =
+      node.type === 'decision' ? `The evaluating agent of ${name(node.id)}` : name(node.id);
+    if (kind === 'workflow' && binding.kind === 'slot') {
+      add({
+        rule: 'slot-in-workflow',
+        severity: 'error',
+        message: `${who} is a slot (“${binding.role}”). Slots belong in patterns; pick an agent.`,
+        nodes: [node.id],
+        edges: [],
+      });
+    }
+    if (kind === 'pattern' && binding.kind === 'agent') {
+      add({
+        rule: 'agent-in-pattern',
+        severity: 'error',
+        message: `${who} is a concrete agent. In a pattern, agents are slots: give it a role, and optionally a default agent.`,
+        nodes: [node.id],
+        edges: [],
+      });
+    }
   }
 
   for (const loop of loops.uncapped) {
@@ -403,7 +466,7 @@ export function validateWorkflow(
 
     // A reference passes a workspace path: it needs a file, and a read tool covering it.
     if (edge.context.mode === 'reference') {
-      const origin = traceOrigin(graph, edge);
+      const origin = traceOrigin(graph, edge, ports);
       const paths =
         origin?.type === 'artifact'
           ? [origin.path]
@@ -453,6 +516,10 @@ export function applyFix(graph: WorkflowGraph, fix: ProblemFix): WorkflowGraph {
       switch (fix.kind) {
         case 'join-all':
           return { ...n, join: { mode: 'all' } };
+        case 'port-join-all':
+          return n.type === 'pattern'
+            ? { ...n, portJoins: { ...n.portJoins, [fix.port]: { mode: 'all' } } }
+            : n;
         case 'cap-exit':
           return n.type === 'decision'
             ? {

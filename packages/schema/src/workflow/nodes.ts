@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AgentRef, LocalId, PatternRef, ToolRef } from '../ids.js';
+import { AgentRef, LocalId, NodePath, PatternRef, ToolRef } from '../ids.js';
 import { WorkspaceGlob } from '../tool.js';
 
 /** What travels along an edge. `none` means pure sequencing ("start after"). */
@@ -164,8 +164,17 @@ export const SharedStoreNode = nodeBase.extend({
 export const PatternNode = nodeBase.extend({
   type: z.literal('pattern'),
   pattern: PatternRef,
-  /** Slot bindings keyed by the slot's agent-node id inside the pattern. */
-  bindings: z.record(LocalId, AgentBinding).default({}),
+  /**
+   * Slot bindings keyed by the slot's path inside the pattern (see `listSlots`): `maker`,
+   * `worker@2` for a repeated slot, `team@1/worker@2` for a slot of a nested pattern. In a
+   * workflow every binding is a concrete agent. Inside a pattern, a nested instance's slots
+   * stay open slots of the outer pattern; a `slot` binding only renames them.
+   */
+  bindings: z.record(NodePath, AgentBinding).default({}),
+  /** Copies per repeat group of the pattern, keyed by group id. Unset = the group's default. */
+  repeat: z.record(LocalId, z.int().positive()).default({}),
+  /** Join mode per input port (keyed by port id) that has more than one incoming edge. */
+  portJoins: z.record(LocalId, JoinMode).default({}),
 });
 
 export const NoteNode = nodeBase.extend({

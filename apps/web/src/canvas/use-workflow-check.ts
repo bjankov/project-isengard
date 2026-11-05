@@ -83,7 +83,7 @@ export function useWorkflowCheck(graph: WorkflowGraph, loops?: LoopAnalysis): Wo
 
   return useMemo(() => {
     const analysis = loops ?? analyzeLoops(graph);
-    const problems = validateWorkflow(graph, resolver, analysis);
+    const problems = validateWorkflow(graph, resolver, { loops: analysis });
     const nodes = new Map<string, Severity>();
     const edges = new Map<string, Severity>();
     const uncappedEdges = new Set<string>();
