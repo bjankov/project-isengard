@@ -1,9 +1,15 @@
 import {
   describeScope,
+  refKey,
   type EntityInput,
   type EntityVersionSummary,
+  type Ref,
   type Settings,
+  type Skill,
+  type ToolPreset,
 } from '@app/schema';
+import { UpdateAvailable } from '@/components/update-available';
+import { useRegisterLocal } from '@/stores/pinned';
 import { Bot, ShieldAlert, Sparkles } from 'lucide-react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { AgentDefaultsFields, modelLabel } from '@/components/agent-defaults';
@@ -39,6 +45,18 @@ function pinnedVersion(versions: Record<string, EntityVersionSummary>, id: strin
 }
 
 /** The version a reference pins, shown on its card. */
+function LocalCopyBadge() {
+  return (
+    <Badge
+      variant="secondary"
+      className="rounded-md px-1.5 py-0 text-[11px]"
+      title="Deleted from the library; this agent keeps a local copy of the version it pins"
+    >
+      local copy
+    </Badge>
+  );
+}
+
 function PinnedVersion({ version }: { version: string }) {
   return (
     <Badge
@@ -161,13 +179,26 @@ function AgentEditor({
   const toolVersions = useVersions('tool');
   const { draft, errors, update } = editor;
   useSaveShortcut(() => void editor.save());
+  useRegisterLocal(draft);
 
   const skillRefs = draft.skills ?? [];
   const toolRefs = draft.tools ?? [];
-  const selectedTools = toolRefs.map((r) => ({
-    ref: r,
-    preset: tools?.find((t) => t.id === r.id),
-  }));
+  // Deleted skills and tools this agent keeps as local copies, or as placeholders.
+  const copyOf = (ref: Ref) => draft.localCopies?.[refKey(ref)]?.entity;
+  const deletedName = (ref: Ref) => draft.deletedRefs?.[refKey(ref)]?.name;
+  const selectedTools = toolRefs.map((r) => {
+    const copy = copyOf(r);
+    return {
+      ref: r,
+      preset: tools?.find((t) => t.id === r.id) ?? (copy as ToolPreset | undefined),
+      local: !!copy && !tools?.some((t) => t.id === r.id),
+    };
+  });
+  const repinRef = (field: 'skills' | 'tools', id: string, version: string) =>
+    update((d) => ({
+      ...d,
+      [field]: (d[field] ?? []).map((x) => (x.id === id ? { ...x, version } : x)),
+    }));
   const hasUnrestricted = selectedTools.some(
     (t) => t.preset && describeScope(t.preset).unrestricted,
   );
@@ -184,6 +215,7 @@ function AgentEditor({
         saving={editor.saving}
         onSave={() => void editor.save()}
         onDelete={editor.saved && source.branch === 'draft' ? editor.remove : undefined}
+        onDeleteWithReferences={editor.removeWithReferences}
         versioning={editor.versioning}
       >
         {hasUnrestricted && <UnrestrictedShellBadge />}
@@ -269,16 +301,31 @@ function AgentEditor({
           ) : (
             <div className="space-y-2">
               {skillRefs.map((r) => {
-                const skill = skills?.find((s) => s.id === r.id);
+                const inLibrary = skills?.find((s) => s.id === r.id);
+                const copy = inLibrary ? undefined : (copyOf(r) as Skill | undefined);
+                const skill = inLibrary ?? copy;
                 return (
                   <RefCard
                     key={r.id}
                     icon={<Sparkles className="size-4" />}
-                    title={skill?.name ?? r.id}
-                    badge={<PinnedVersion version={r.version} />}
+                    title={skill?.name ?? deletedName(r) ?? r.id}
+                    badge={
+                      <>
+                        <PinnedVersion version={r.version} />
+                        {copy && <LocalCopyBadge />}
+                        <UpdateAvailable
+                          kind="skill"
+                          id={r.id}
+                          version={r.version}
+                          name={skill?.name ?? r.id}
+                          onUpdate={(to) => repinRef('skills', r.id, to)}
+                        />
+                      </>
+                    }
                     subtitle={skill?.description}
-                    href={`/skills/${r.id}`}
+                    href={copy ? undefined : `/skills/${r.id}`}
                     missing={skills !== undefined && !skill}
+                    missingLabel={deletedName(r) ? 'deleted from the library' : undefined}
                     onRemove={() =>
                       update((d) => ({
                         ...d,
@@ -337,15 +384,28 @@ function AgentEditor({
             <p className="text-sm text-muted-foreground">No tools. The agent can only reply.</p>
           ) : (
             <div className="space-y-2">
-              {selectedTools.map(({ ref, preset }) => (
+              {selectedTools.map(({ ref, preset, local }) => (
                 <RefCard
                   key={ref.id}
                   icon={preset ? <BuiltinIcon id={preset.builtin} /> : undefined}
-                  title={preset?.name ?? ref.id}
-                  badge={<PinnedVersion version={ref.version} />}
+                  title={preset?.name ?? deletedName(ref) ?? ref.id}
+                  badge={
+                    <>
+                      <PinnedVersion version={ref.version} />
+                      {local && <LocalCopyBadge />}
+                      <UpdateAvailable
+                        kind="tool"
+                        id={ref.id}
+                        version={ref.version}
+                        name={preset?.name ?? ref.id}
+                        onUpdate={(to) => repinRef('tools', ref.id, to)}
+                      />
+                    </>
+                  }
                   subtitle={preset ? <ScopeSummary preset={preset} /> : undefined}
-                  href={`/tools/${ref.id}`}
+                  href={local ? undefined : `/tools/${ref.id}`}
                   missing={tools !== undefined && !preset}
+                  missingLabel={deletedName(ref) ? 'deleted from the library' : undefined}
                   onRemove={() =>
                     update((d) => ({ ...d, tools: (d.tools ?? []).filter((x) => x.id !== ref.id) }))
                   }

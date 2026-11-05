@@ -9,7 +9,9 @@ import {
   createPatternNode,
   flattenWorkflow,
   patternPorts,
+  repin,
   type PatternLookup,
+  type Project,
   type WorkflowEdge,
   type WorkflowNode,
   extractSubgraph,
@@ -48,7 +50,7 @@ import { useEntityEditor, type EditorSourceReady } from '@/hooks/use-entity-edit
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useUndoHistory } from '@/hooks/use-undo';
 import { useEntities } from '@/stores/library';
-import { usePinnedStore } from '@/stores/pinned';
+import { usePinnedStore, useRegisterLocal } from '@/stores/pinned';
 import { useSettings } from '@/stores/settings';
 import { CanvasContext, type CanvasContextValue } from './context';
 import {
@@ -138,6 +140,8 @@ export function WorkflowEditor({
   const isPattern = kind === 'pattern';
 
   const doc = useMemo(() => toDoc(kind, editor.draft), [kind, editor.draft]);
+  // Deleted entities this workflow keeps as local copies resolve like library ones.
+  useRegisterLocal(doc);
   const { update } = editor;
   const restore = useCallback(
     (next: WorkflowDoc) => update(() => fromDoc(kind, next)),
@@ -861,7 +865,13 @@ export function WorkflowEditor({
       } else if (mod && key === 'a') {
         e.preventDefault();
         setSelection({ nodes: graph.nodes.map((n) => n.id), edges: [] });
-      } else if (!mod && !e.altKey && key === 'p' && after?.type === 'agent' && !isPattern) {
+      } else if (
+        !mod &&
+        !e.altKey &&
+        key === 'p' &&
+        after?.type === 'agent' &&
+        kind === 'project'
+      ) {
         e.preventDefault();
         setPreview(after.id);
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -871,7 +881,7 @@ export function WorkflowEditor({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [history, copy, paste, deleteSelection, graph.nodes, after, isPattern]);
+  }, [history, copy, paste, deleteSelection, graph.nodes, after, kind]);
 
   const context: CanvasContextValue = useMemo(
     () => ({
@@ -885,6 +895,8 @@ export function WorkflowEditor({
       tools,
       expanded,
       toggleExpanded,
+      repin: (location: string, version: string) =>
+        change((d) => repin('project', d as unknown as Project, location, version) as never),
     }),
     [
       kind,
@@ -897,6 +909,7 @@ export function WorkflowEditor({
       tools,
       expanded,
       toggleExpanded,
+      change,
     ],
   );
 
@@ -918,12 +931,21 @@ export function WorkflowEditor({
     <div className="flex h-full min-h-0 flex-col">
       <UnsavedChangesGuard dirty={editor.dirty} />
       <EditorHeader
-        eyebrow={isPattern ? (onFork ? 'Pattern · project fork' : 'Pattern') : 'Project'}
+        eyebrow={
+          isPattern
+            ? onFork
+              ? 'Pattern · project fork'
+              : 'Pattern'
+            : kind === 'template'
+              ? 'Template'
+              : 'Project'
+        }
         title={editor.saved?.name ?? doc.name}
         dirty={editor.dirty}
         saving={editor.saving}
         onSave={save}
         onDelete={editor.saved && !onFork ? editor.remove : undefined}
+        onDeleteWithReferences={editor.removeWithReferences}
         versioning={versioning}
         actions={
           <>
@@ -957,7 +979,7 @@ export function WorkflowEditor({
                 <TooltipContent>Redo ({isMac ? '⇧⌘Z' : 'Ctrl+Shift+Z'})</TooltipContent>
               </Tooltip>
             </div>
-            {!isPattern && (
+            {kind === 'project' && (
               <Button variant="ghost" size="sm" onClick={() => setTemplateOpen(true)}>
                 <BookmarkPlus />
                 Save as template
@@ -1078,7 +1100,7 @@ export function WorkflowEditor({
         selfId={isPattern ? entityId : undefined}
         onInsert={(insert) => insertPattern(insert, inserting?.at)}
       />
-      {!isPattern && (
+      {kind === 'project' && (
         <>
           <SaveAsTemplateDialog open={templateOpen} onOpenChange={setTemplateOpen} doc={doc} />
           <ContextPreview

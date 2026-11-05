@@ -22,6 +22,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { useFetched } from '@/hooks/use-fetched';
 import { ApiError, api } from '@/lib/api';
+import { offerCascade } from '@/stores/cascade';
 import { useLibrary, useVersions } from '@/stores/library';
 
 type ForkKind = 'agent' | 'pattern';
@@ -76,6 +77,11 @@ export function PromoteFork({
       });
       setDialog(null);
       onPromoted({ id, version: res.version });
+      // PLAN.md 7.7: promoting runs the propagation flow.
+      void offerCascade(
+        [{ kind, id }],
+        `The fork was merged: “${res.entity.name}” is now ${res.version}.`,
+      );
     } catch (err) {
       if (err instanceof ApiError && err.body?.error === 'merge_conflict') {
         setDialog('conflict');

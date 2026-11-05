@@ -24,6 +24,8 @@ export interface CanvasContextValue {
   /** Expanded pattern instances (paths), and expanding or collapsing one. */
   expanded: ReadonlySet<string>;
   toggleExpanded: (path: string) => void;
+  /** Pin the reference at a location (see `RefLocation.key`) to another version. */
+  repin: (location: string, version: string) => void;
 }
 
 export const CanvasContext = createContext<CanvasContextValue | null>(null);

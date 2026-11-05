@@ -1,4 +1,5 @@
 import {
+  KIND_PLURALS,
   forkBranchName,
   isBranchVersion,
   modelKey,
@@ -40,7 +41,8 @@ import { compact, omit } from '@/lib/same';
 import { PromoteFork } from '@/components/promote-fork';
 import { usePinned } from '@/stores/pinned';
 import { useEntities, useVersions } from '@/stores/library';
-import { updateNode, type Change, type WorkflowDoc } from './doc';
+import { UpdateAvailable } from '@/components/update-available';
+import { updateNode, type CanvasKind, type Change, type WorkflowDoc } from './doc';
 import { OptionalNumber } from './fields';
 import { Kbd } from './kbd';
 
@@ -70,6 +72,7 @@ const LIMITS: { key: keyof Limits; label: string }[] = [
 ];
 
 export function AgentInspector({
+  kind = 'project',
   projectId,
   nodeId,
   doc,
@@ -79,6 +82,9 @@ export function AgentInspector({
   settings,
   onPreview,
 }: {
+  /** Templates have no overrides and no context preview (those are per project). */
+  kind?: CanvasKind;
+  /** The id of the workflow (project or template) the node is in. */
   projectId: string;
   nodeId: string;
   doc: WorkflowDoc;
@@ -138,11 +144,13 @@ export function AgentInspector({
 
   return (
     <div className="space-y-6">
-      <Button variant="secondary" className="w-full justify-start" onClick={onPreview}>
-        <ScanEye />
-        Context preview
-        <Kbd className="ml-auto">P</Kbd>
-      </Button>
+      {kind === 'project' && (
+        <Button variant="secondary" className="w-full justify-start" onClick={onPreview}>
+          <ScanEye />
+          Context preview
+          <Kbd className="ml-auto">P</Kbd>
+        </Button>
+      )}
       <Field label="Agent" htmlFor="node-agent">
         <Select
           value={ref.id}
@@ -177,15 +185,24 @@ export function AgentInspector({
           ) : (
             <>
               Pinned to <span className="font-mono text-foreground">{ref.version}</span>
-              {latest && latest !== ref.version && (
-                <span>· {latest} is the latest (updating arrives in M6)</span>
+              {pinned.state === 'ready' && pinned.local && (
+                <span>· deleted from the library, kept as a local copy</span>
               )}
+              <UpdateAvailable
+                kind="agent"
+                id={ref.id}
+                version={ref.version}
+                name={agent?.name ?? ref.id}
+                onUpdate={(to) => pin(to)}
+              />
             </>
           )}
         </p>
       </Field>
 
-      <OverridesSection nodeId={nodeId} agent={agent} doc={doc} change={change} models={models} />
+      {kind === 'project' && (
+        <OverridesSection nodeId={nodeId} agent={agent} doc={doc} change={change} models={models} />
+      )}
 
       {/* Definition: changing it forks */}
       <section
@@ -202,7 +219,11 @@ export function AgentInspector({
           <Loader2 className="size-4 animate-spin text-muted-foreground" />
         )}
         {pinned.state === 'missing' && (
-          <p className="text-xs text-destructive">This agent version no longer exists.</p>
+          <p className="text-xs text-destructive">
+            {pinned.deleted
+              ? `“${pinned.deleted}” was deleted from the library. Choose another agent above.`
+              : 'This agent version no longer exists.'}
+          </p>
         )}
         {agent && (
           <>
@@ -239,7 +260,7 @@ export function AgentInspector({
           <div className="flex flex-wrap gap-2">
             <Button asChild size="sm" variant="outline">
               <Link
-                to={`/agents/${ref.id}?branch=${encodeURIComponent(ref.version)}&back=${encodeURIComponent(`/projects/${projectId}`)}`}
+                to={`/agents/${ref.id}?branch=${encodeURIComponent(ref.version)}&back=${encodeURIComponent(`/${KIND_PLURALS[kind]}/${projectId}`)}`}
               >
                 <GitFork />
                 Edit fork
@@ -274,7 +295,7 @@ export function AgentInspector({
             disabled={!agent}
           >
             <GitFork />
-            Customize for this project
+            Customize for this {kind}
           </Button>
         )}
       </section>

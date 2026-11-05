@@ -1,6 +1,11 @@
 import {
   KIND_PLURALS,
   type ApiErrorBody,
+  type CascadeApplyResponse,
+  type CascadePreview,
+  type CascadeRoot,
+  type DeleteRequest,
+  type DeleteWithReferencesResponse,
   type DeleteResponse,
   type DiffResponse,
   type DiscardBranchResponse,
@@ -139,6 +144,33 @@ export const api = {
     apiFetch<DiscardBranchResponse>(`${path(kind, id)}/branches/${encodeURIComponent(branch)}`, {
       method: 'DELETE',
     }),
+
+  /** Delete an entity still referenced on main, keeping local copies or placeholders. */
+  removeWithReferences: (kind: EntityKind, id: string, request: DeleteRequest) =>
+    apiFetch<DeleteWithReferencesResponse>(`${path(kind, id)}/delete`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    }),
+
+  /** Who pins older versions of the roots, transitively (PLAN.md 8.2). */
+  cascadePreview: (roots: CascadeRoot[]) =>
+    apiFetch<CascadePreview>('/cascade/preview', {
+      method: 'POST',
+      body: JSON.stringify({ roots }),
+    }),
+
+  cascadeApply: (roots: CascadeRoot[], accept: string[]) =>
+    apiFetch<CascadeApplyResponse>('/cascade/apply', {
+      method: 'POST',
+      body: JSON.stringify({ roots, accept }),
+    }),
+
+  /** Settings → Restore defaults: add back deleted built-in patterns. */
+  restoreDefaults: () =>
+    apiFetch<{ restored: { id: string; name: string; version: string }[] }>(
+      '/settings/restore-defaults',
+      { method: 'POST' },
+    ),
 
   getSettings: () => apiFetch<SettingsResponse>('/settings'),
 

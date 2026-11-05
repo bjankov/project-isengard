@@ -2,14 +2,15 @@ import type {
   EntityInput,
   Pattern,
   Project,
+  Template,
   RepeatGroup,
   WorkflowEdge,
   WorkflowNode,
 } from '@app/schema';
 import { omit } from '@/lib/same';
 
-/** What a canvas edits: a project's workflow, or a pattern's. */
-export type CanvasKind = 'project' | 'pattern';
+/** What a canvas edits: a project's workflow, a template's, or a pattern's. */
+export type CanvasKind = 'project' | 'template' | 'pattern';
 
 /**
  * The document a canvas edits (everything but the id), the same shape for both kinds so the
@@ -22,12 +23,17 @@ export type WorkflowDoc = Omit<Project, 'id'> & { repeat: RepeatGroup[] };
 export function toDoc(kind: CanvasKind, entity: EntityInput<CanvasKind>): WorkflowDoc {
   // Editor drafts start from parsed entities, so every defaulted field is present.
   if (kind === 'project') return { ...(entity as unknown as Omit<Project, 'id'>), repeat: [] };
+  if (kind === 'template') {
+    const t = entity as unknown as Omit<Template, 'id'>;
+    return { ...t, overrides: {}, workspacePath: '', repeat: [] };
+  }
   const p = entity as unknown as Omit<Pattern, 'id'>;
   return { ...p, overrides: {}, workspacePath: '' };
 }
 
 export function fromDoc(kind: CanvasKind, doc: WorkflowDoc): EntityInput<CanvasKind> {
   const { repeat, overrides, workspacePath, ...common } = doc;
+  if (kind === 'template') return common as EntityInput<'template'>;
   return kind === 'project'
     ? { ...common, overrides, workspacePath }
     : ({ ...common, repeat } as EntityInput<'pattern'>);

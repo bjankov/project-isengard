@@ -30,7 +30,7 @@ export const PATTERN_ITEM = 'pattern';
  */
 export function needsPick(kind: CanvasKind, type: CanvasNodeType): 'agent' | 'tool' | undefined {
   if (type === 'toolStep') return 'tool';
-  if (type === 'agent' && kind === 'project') return 'agent';
+  if (type === 'agent' && kind !== 'pattern') return 'agent';
   return undefined;
 }
 

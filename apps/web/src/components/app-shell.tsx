@@ -9,6 +9,7 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
+import { CascadeDialog } from '@/components/cascade-dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useServerStatus } from '@/stores/server-status';
@@ -111,6 +112,7 @@ export function AppShell() {
       <main className="min-h-0 flex-1 overflow-auto">
         <Outlet />
       </main>
+      <CascadeDialog />
     </div>
   );
 }

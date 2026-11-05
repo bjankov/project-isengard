@@ -6,6 +6,7 @@ import {
   safeParseEntity,
   type EntityByKind,
   type EntityInput,
+  type DeleteRequest,
   type EntityKind,
   type ReferencedErrorBody,
   type VersionStatus,
@@ -16,6 +17,7 @@ import { toast } from 'sonner';
 import { SKIP_GUARD } from '@/components/unsaved-changes-guard';
 import { ApiError, api } from '@/lib/api';
 import { issuesToErrors, type FieldErrors } from '@/lib/validation';
+import { offerCascade } from '@/stores/cascade';
 import { useEntities, useLibrary } from '@/stores/library';
 import { sameData } from '@/lib/same';
 
@@ -148,6 +150,8 @@ export interface EntityEditor<K extends EntityKind> {
   save: () => Promise<void>;
   /** Resolves to the blocking references when the delete is refused (409). */
   remove: () => Promise<ReferencedErrorBody['references'] | undefined>;
+  /** Delete although still referenced: each referrer keeps a local copy or a placeholder. */
+  removeWithReferences: (request: DeleteRequest) => Promise<boolean>;
   versioning: Versioning;
 }
 
@@ -280,6 +284,10 @@ export function useEntityEditor<K extends EntityKind>(
         toast.success(`Merged “${res.entity.name}” as ${res.version}`, {
           description: `Commit ${res.commit.hash.slice(0, 7)}`,
         });
+        void offerCascade(
+          [{ kind, id: res.entity.id }],
+          `“${res.entity.name}” is now ${res.version}.`,
+        );
         return 'merged';
       } catch (err) {
         if (err instanceof ApiError && err.body?.error === 'merge_conflict') return 'conflict';
@@ -332,6 +340,33 @@ export function useEntityEditor<K extends EntityKind>(
     }
   }, [saved, kind, removeFromStore, navigate]);
 
+  const removeWithReferences = useCallback(
+    async (request: DeleteRequest) => {
+      if (!saved) return false;
+      try {
+        const res = await api.removeWithReferences(kind, saved.id, request);
+        removeFromStore(kind, saved.id);
+        const { load } = useLibrary.getState();
+        await Promise.all([...new Set(res.updated.map((u) => u.kind))].map((k) => load(k)));
+        toast.success(`Deleted “${saved.name}”`, {
+          description: `${String(res.updated.length)} ${res.updated.length === 1 ? 'entity keeps' : 'entities keep'} working with it as chosen`,
+        });
+        void navigate(`/${KIND_PLURALS[kind]}`, { replace: true, state: SKIP_GUARD });
+        void offerCascade(
+          res.updated.map((u) => ({ kind: u.kind, id: u.id })),
+          `“${saved.name}” was deleted, and what used it got a new version.`,
+        );
+        return true;
+      } catch (err) {
+        toast.error('Could not delete', {
+          description: err instanceof Error ? err.message : String(err),
+        });
+        return false;
+      }
+    },
+    [saved, kind, removeFromStore, navigate],
+  );
+
   return {
     draft,
     saved,
@@ -342,6 +377,7 @@ export function useEntityEditor<K extends EntityKind>(
     update,
     save,
     remove,
+    removeWithReferences,
     versioning: {
       kind,
       id: saved?.id,

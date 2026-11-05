@@ -258,6 +258,7 @@ function ToolEditor({ source }: { source: EditorSourceReady<'tool'> }) {
         saving={editor.saving}
         onSave={() => void editor.save()}
         onDelete={editor.saved ? editor.remove : undefined}
+        onDeleteWithReferences={editor.removeWithReferences}
         versioning={editor.versioning}
       >
         {unrestricted && <UnrestrictedShellBadge />}
