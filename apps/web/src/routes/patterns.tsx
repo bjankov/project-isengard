@@ -238,7 +238,12 @@ export function PatternCanvasRoute() {
   if (source.state === 'loading') return null;
   return (
     <ReactFlowProvider>
-      <WorkflowEditor key={`${id ?? ''}@${branch ?? ''}`} kind="pattern" source={source} />
+      <WorkflowEditor
+        key={`${id ?? ''}@${branch ?? ''}`}
+        kind="pattern"
+        source={source}
+        back={params.get('back') ?? undefined}
+      />
     </ReactFlowProvider>
   );
 }

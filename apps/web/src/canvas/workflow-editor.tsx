@@ -1,4 +1,5 @@
 import {
+  DRAFT_BRANCH,
   analyzeLoops,
   applyFix,
   canConnect,
@@ -37,6 +38,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { BookmarkPlus, Redo2, Undo2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router';
 import { toast } from 'sonner';
 import { EditorHeader } from '@/components/editor-header';
 import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard';
@@ -120,9 +122,12 @@ const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform
 export function WorkflowEditor({
   kind,
   source,
+  back,
 }: {
   kind: CanvasKind;
   source: EditorSourceReady<CanvasKind>;
+  /** Where "Back" goes when editing a fork opened from a project. */
+  back?: string;
 }) {
   const editor = useEntityEditor(kind, source);
   const settings = useSettings();
@@ -146,6 +151,24 @@ export function WorkflowEditor({
     },
     [history, doc, update, kind],
   );
+
+  // A change that must be saved right away (re-pinning a promoted fork): save once the
+  // changed document has rendered, so the save sees it.
+  const pendingSave = useRef(false);
+  const changeAndSave: Change = useCallback(
+    (fn, key) => {
+      pendingSave.current = true;
+      change(fn, key);
+    },
+    [change],
+  );
+  const { save: saveNow } = editor;
+  useEffect(() => {
+    if (!pendingSave.current) return;
+    pendingSave.current = false;
+    void saveNow();
+  }, [editor.draft, saveNow]);
+  const onFork = source.branch !== DRAFT_BRANCH;
 
   const [selection, setSelection] = useState<Selection>({ nodes: [], edges: [] });
   const [measured, setMeasured] = useState<Record<string, { width: number; height: number }>>({});
@@ -854,12 +877,12 @@ export function WorkflowEditor({
     <div className="flex h-full min-h-0 flex-col">
       <UnsavedChangesGuard dirty={editor.dirty} />
       <EditorHeader
-        eyebrow={isPattern ? 'Pattern' : 'Project'}
+        eyebrow={isPattern ? (onFork ? 'Pattern · project fork' : 'Pattern') : 'Project'}
         title={editor.saved?.name ?? doc.name}
         dirty={editor.dirty}
         saving={editor.saving}
         onSave={save}
-        onDelete={editor.saved ? editor.remove : undefined}
+        onDelete={editor.saved && !onFork ? editor.remove : undefined}
         versioning={versioning}
         actions={
           <>
@@ -902,6 +925,22 @@ export function WorkflowEditor({
           </>
         }
       />
+      {onFork && (
+        <div className="border-b bg-violet-50 px-6 py-2 text-sm">
+          {back?.startsWith('/') && (
+            <Link
+              to={back}
+              className="mr-2 font-medium text-violet-800 underline-offset-4 hover:underline"
+            >
+              ← Back to the project
+            </Link>
+          )}
+          <span className="text-muted-foreground">
+            This is a fork: changes here affect only the node that pins it. Promote it from that
+            node’s inspector.
+          </span>
+        </div>
+      )}
       <div className="flex min-h-0 flex-1">
         <Palette kind={kind} onPick={(type) => pick(type)} onPickPattern={() => setInserting({})} />
         <div className="flex min-w-0 flex-1 flex-col">
@@ -965,6 +1004,8 @@ export function WorkflowEditor({
         <Inspector
           kind={kind}
           entityId={entityId}
+          dirty={editor.dirty}
+          changeAndSave={changeAndSave}
           doc={doc}
           change={change}
           selection={selection}

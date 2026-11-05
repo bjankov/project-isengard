@@ -343,3 +343,11 @@ Format: date, milestone, decision, reason.
 - **Expand or collapse** with the button in the instance's header, or by double-clicking it.
 - **Quick-add matches patterns by name only** and lists them after tool steps. Their descriptions are prose that fuzzily matched unrelated searches (found by an M3 browser test).
 - **A collapsed instance keeps handles for the ports its edges use** while its pattern is still loading, so edges don't detach (this caused a burst of React Flow warnings on every load).
+
+### Forks and promotion
+- **Pattern instances fork like agents (M3):** **Customize for this project** (or "…for this pattern" for a nested instance) creates `fork-<container id>-<node id>` at the pinned version and pins it; slot bindings, counts and port joins are kept. **Edit fork** opens the pattern editor on that branch (`?branch=&back=`), headed "Pattern · project fork" with a back link and a banner; Delete is hidden there. **Use library version** pins the current main version again (the fork branch stays, unused).
+- **Promotion is in the node's inspector, for agent and pattern forks alike** (`PromoteFork`):
+  - **Merge to main:** an optional note, then `POST …/merge {branch}`. If main changed since the fork started, a dialog shows main and the fork side by side (the files, as for M2 conflicts) with **Merge anyway**; no line-by-line merge (PLAN.md 7.7). The node then pins the new version.
+  - **Save as new:** a name (default "<name> (custom)"), then the fork's content is created as a new entity (`v1`) and the fork branch is deleted. The node then pins the new entity. The original is unchanged.
+- **Promoting saves the project (or pattern) right away,** so it never pins a branch that no longer exists. To avoid saving unrelated edits by surprise, promotion is disabled while there are unsaved changes ("Save first").
+- **Other users of the promoted entity are not touched:** they keep their pinned version. The cascade preview that offers to move them is M6.

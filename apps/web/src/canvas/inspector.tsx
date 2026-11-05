@@ -62,6 +62,10 @@ interface InspectorProps {
   entityId: string;
   doc: WorkflowDoc;
   change: Change;
+  /** A change saved right away (re-pinning a promoted fork). */
+  changeAndSave: Change;
+  /** The document has unsaved changes. */
+  dirty: boolean;
   selection: Selection;
   settings: Settings | undefined;
   errors: FieldErrors;
@@ -457,7 +461,15 @@ function NodePanel(props: InspectorProps & { node: WorkflowNode }) {
         )}
 
         {node.type === 'pattern' && (
-          <PatternInstanceFields node={node} doc={doc} change={change} kind={kind} />
+          <PatternInstanceFields
+            node={node}
+            doc={doc}
+            change={change}
+            changeAndSave={props.changeAndSave}
+            dirty={props.dirty}
+            kind={kind}
+            entityId={entityId}
+          />
         )}
 
         {node.type === 'agent' && node.binding.kind === 'agent' && (
@@ -466,6 +478,8 @@ function NodePanel(props: InspectorProps & { node: WorkflowNode }) {
             nodeId={node.id}
             doc={doc}
             change={change}
+            changeAndSave={props.changeAndSave}
+            dirty={props.dirty}
             settings={settings}
             onPreview={() => props.onPreview(node.id)}
           />

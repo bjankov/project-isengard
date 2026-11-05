@@ -4,6 +4,8 @@
  */
 import {
   analyzeLoops,
+  forkBranchName,
+  isBranchVersion,
   listSlots,
   newLocalId,
   patternPorts,
@@ -14,8 +16,21 @@ import {
   type RepeatGroup,
   type WorkflowNode,
 } from '@app/schema';
-import { useMemo } from 'react';
-import { ExternalLink, Plus, Repeat2, Trash2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { ExternalLink, GitFork, Plus, Repeat2, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { PromoteFork } from '@/components/promote-fork';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { ApiError, api } from '@/lib/api';
 import { Link } from 'react-router';
 import { Field } from '@/components/field';
 import { Button } from '@/components/ui/button';
@@ -335,12 +350,19 @@ export function PatternInstanceFields({
   node,
   doc,
   change,
+  changeAndSave,
+  dirty,
   kind,
+  entityId,
 }: {
   node: Extract<WorkflowNode, { type: 'pattern' }>;
   doc: WorkflowDoc;
   change: Change;
+  changeAndSave: Change;
+  dirty: boolean;
   kind: CanvasKind;
+  /** The project (or pattern) containing the instance; forks are named after it. */
+  entityId: string;
 }) {
   const roots = useMemo(() => [node.pattern], [node.pattern]);
   const tree = usePatternTree(roots);
@@ -378,6 +400,46 @@ export function PatternInstanceFields({
       return { ...n, bindings: { ...n.bindings, [key]: { kind: 'agent', agent } } };
     }, `bind:${key}`);
 
+  const patternVersions = useVersions('pattern');
+  const libraryName = useEntities('pattern')?.find((p) => p.id === node.pattern.id)?.name;
+  const forked = isBranchVersion(node.pattern.version);
+  const latest = patternVersions[node.pattern.id]?.version ?? undefined;
+  const [confirmFork, setConfirmFork] = useState(false);
+  const [forking, setForking] = useState(false);
+
+  /** Pin another version (or another pattern), keeping bindings, counts and port joins. */
+  const pin = (version: string, id = node.pattern.id, apply: Change = change) =>
+    apply((d) =>
+      updateNode(d, node.id, (n) =>
+        n.type === 'pattern' ? { ...n, pattern: { kind: 'pattern', id, version } } : n,
+      ),
+    );
+
+  const fork = async () => {
+    if (!entityId) return;
+    setForking(true);
+    const branch = forkBranchName(entityId, node.id);
+    try {
+      await api.createBranch('pattern', node.pattern.id, branch, node.pattern.version);
+    } catch (err) {
+      // Re-forking a node whose fork branch still exists: pin it again.
+      if (!(err instanceof ApiError && /already exists/.test(err.message))) {
+        toast.error('Could not fork the pattern', {
+          description: err instanceof Error ? err.message : String(err),
+        });
+        setForking(false);
+        return;
+      }
+    }
+    pin(branch);
+    setForking(false);
+    setConfirmFork(false);
+    toast.success('Forked for this node', {
+      description: 'Save, then use “Edit fork” to change what is inside.',
+    });
+  };
+  const back = `/${kind === 'project' ? 'projects' : 'patterns'}/${entityId}`;
+
   const loops = analyzeLoops(doc.workflow);
   const joinedPorts = pattern
     ? patternPorts(pattern).inputs.map((port) => ({
@@ -406,7 +468,74 @@ export function PatternInstanceFields({
         {pattern?.description && (
           <p className="text-xs text-muted-foreground">{pattern.description}</p>
         )}
+        {forked ? (
+          <>
+            <div className="flex flex-wrap gap-2">
+              <Button asChild size="sm" variant="outline">
+                <Link
+                  to={`/patterns/${node.pattern.id}?branch=${encodeURIComponent(node.pattern.version)}&back=${encodeURIComponent(back)}`}
+                >
+                  <GitFork />
+                  Edit fork
+                </Link>
+              </Button>
+              {latest && (
+                <Button size="sm" variant="ghost" onClick={() => pin(latest)}>
+                  Use library version ({latest})
+                </Button>
+              )}
+            </div>
+            <div className="space-y-2 border-t pt-3">
+              <p className="text-xs text-muted-foreground">
+                Promote the fork: make it the library pattern’s next version, or a new pattern.
+              </p>
+              <PromoteFork
+                kind="pattern"
+                id={node.pattern.id}
+                branch={node.pattern.version}
+                name={libraryName ?? pattern?.name ?? node.pattern.id}
+                disabledReason={dirty ? 'Save first: promoting saves.' : undefined}
+                onPromoted={(to) => pin(to.version, to.id, changeAndSave)}
+              />
+            </div>
+          </>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!pattern || !entityId}
+            onClick={() => setConfirmFork(true)}
+          >
+            <GitFork />
+            Customize for this {kind === 'project' ? 'project' : 'pattern'}
+          </Button>
+        )}
       </section>
+
+      <AlertDialog open={confirmFork} onOpenChange={setConfirmFork}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Fork “{pattern?.name}” for this node?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This node gets its own branch of the pattern, starting from {node.pattern.version}.
+              You can then change what is inside without affecting the library pattern or other
+              users of it. The node is marked as modified. Slot bindings and counts are kept.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={forking}
+              onClick={(e) => {
+                e.preventDefault();
+                void fork();
+              }}
+            >
+              Fork pattern
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {pattern && pattern.repeat.length > 0 && (
         <Field

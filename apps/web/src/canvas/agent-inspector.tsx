@@ -35,6 +35,7 @@ import {
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { ApiError, api } from '@/lib/api';
 import { compact, omit } from '@/lib/same';
+import { PromoteFork } from '@/components/promote-fork';
 import { usePinned } from '@/stores/pinned';
 import { useEntities, useVersions } from '@/stores/library';
 import { updateNode, type Change, type WorkflowDoc } from './doc';
@@ -71,6 +72,8 @@ export function AgentInspector({
   nodeId,
   doc,
   change,
+  changeAndSave,
+  dirty,
   settings,
   onPreview,
 }: {
@@ -78,6 +81,8 @@ export function AgentInspector({
   nodeId: string;
   doc: WorkflowDoc;
   change: Change;
+  changeAndSave: Change;
+  dirty: boolean;
   settings: Settings | undefined;
   onPreview: () => void;
 }) {
@@ -99,8 +104,8 @@ export function AgentInspector({
   const forked = isBranchVersion(ref.version);
   const latest = versions[ref.id]?.version ?? undefined;
 
-  const pin = (version: string, id = ref.id) =>
-    change((d) =>
+  const pin = (version: string, id = ref.id, apply: Change = change) =>
+    apply((d) =>
       updateNode(d, nodeId, (n) =>
         n.type === 'agent'
           ? { ...n, binding: { kind: 'agent', agent: { kind: 'agent', id, version } } }
@@ -327,6 +332,21 @@ export function AgentInspector({
                 Use library version ({latest})
               </Button>
             )}
+          </div>
+        ) : null}
+        {forked ? (
+          <div className="space-y-2 border-t pt-3">
+            <p className="text-xs text-muted-foreground">
+              Promote the fork: make it the library agent’s next version, or a new agent.
+            </p>
+            <PromoteFork
+              kind="agent"
+              id={ref.id}
+              branch={ref.version}
+              name={agents?.find((a) => a.id === ref.id)?.name ?? agent?.name ?? ref.id}
+              disabledReason={dirty ? 'Save the project first: promoting saves it.' : undefined}
+              onPromoted={(to) => pin(to.version, to.id, changeAndSave)}
+            />
           </div>
         ) : (
           <Button
