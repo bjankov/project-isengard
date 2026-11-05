@@ -293,10 +293,10 @@ Deviations from PLAN.md:
 - **Additions agreed at planning:** repeat groups for "choose N" (PLAN.md 10), joins per input port, overrides for agents inside instances, and agent fork promotion.
 - **Other additions:** store reads don't form loops (Moderated discussion and Blackboard needed it); `chain` repeat groups (Pipeline needed it).
 
-Open issues / questions:
-- **Built-in layouts:** Moderated discussion and Blackboard have crossing store edges on the canvas. Cosmetic; M7?
-- **Templates made from a project with a fork** pin that fork branch; promoting the fork deletes the branch, so the template then pins a missing version (shown as missing). This belongs with M6's references and deletion work.
-- **Context preview** covers agents in the project's own graph, not agents inside a pattern instance. Wanted for M6/M7?
-- **Use library version** on a fork leaves the fork branch unused in the library (as for agent forks in M3). Deleting forks is M6.
+Open issues / questions (answered by the user on 2026-11-05):
+- **Built-in layouts:** Moderated discussion and Blackboard have crossing store edges on the canvas. Cosmetic; M7? **Answer: yes, fix it (M7).**
+- **Templates made from a project with a fork** pin that fork branch; promoting the fork deletes the branch, so the template then pins a missing version (shown as missing). This belongs with M6's references and deletion work. **Answer: yes, in M6.**
+- **Context preview** covers agents in the project's own graph, not agents inside a pattern instance. Wanted for M6/M7? **Answer: v2; a pattern may stay a bit of a black box until then.**
+- **Use library version** on a fork leaves the fork branch unused in the library (as for agent forks in M3). Deleting forks is M6. **Answer: leave it for M6.**
 - **Inside a pattern editor, a nested instance's fork** is named after the outer pattern and promoted the same way; it works but isn't covered by a browser test.
 - **One `ResizeObserver` warning** in the whole browser run, as before M5 (harmless browser noise).

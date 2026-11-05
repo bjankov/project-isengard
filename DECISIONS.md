@@ -356,3 +356,9 @@ Format: date, milestone, decision, reason.
 ### Tests (2026-11-05, M5)
 - **Browser tests** (`e2e/patterns.spec.ts`): the M5 done-when flow end to end (insert, bind, expand, overrides inside, collapse, fork, edit, promote as v2 with a note); a pattern built by hand with a repeat group, merged and used with 3 copies; nested expansion in Hierarchy; a pattern inside a pattern.
 - **The tests share one library per run,** so the nested-insert test reads Maker-checker's current version instead of assuming `v1` (the done-when test promotes `v2`).
+
+### M5 review answers (2026-11-05, user decisions)
+- Fix the crossing store edges in the Moderated discussion and Blackboard built-in layouts: M7 (polish).
+- Templates that pin a fork branch that was promoted (and so deleted): handle in M6 with references and deletion.
+- Context preview for agents inside pattern instances: v2 (`V2_BACKLOG.md`).
+- Unused fork branches left by "Use library version": M6, with deleting forks.
