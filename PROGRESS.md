@@ -300,3 +300,58 @@ Open issues / questions (answered by the user on 2026-11-05):
 - **Use library version** on a fork leaves the fork branch unused in the library (as for agent forks in M3). Deleting forks is M6. **Answer: leave it for M6.**
 - **Inside a pattern editor, a nested instance's fork** is named after the outer pattern and promoted the same way; it works but isn't covered by a browser test.
 - **One `ResizeObserver` warning** in the whole browser run, as before M5 (harmless browser noise).
+
+## M6: Propagation and updates (2026-11-05)
+Status: done
+
+Built:
+- **Cascade preview (PLAN.md 8.2):**
+  - **What it finds:** after a merge (or a fork's Merge to main), everything on `main` that pins an older version, transitively: skill → agents → patterns, templates and projects.
+  - **The dialog** shows a tree with **Accept all**, **Decline all** and a checkbox per case. A case is one node, slot binding or skill or tool entry. Declining an agent disables what depends on it.
+  - **Forks** are listed but unchecked.
+  - **Updates that would add errors** are flagged and unchecked.
+  - **Applying:** each accepted entity gets its next version on `main` in one transaction, with a "Uses skill … v2" note in History. Overrides are kept, and drafts get the same re-pins.
+  - **The editor header** shows "N users on older versions" to reopen it later.
+- **Update badges (PLAN.md 8.3):**
+  - "v2 → v4" on agent, pattern, tool-step and evaluator nodes, on slot bindings and the pinned pattern in the inspector, and on an agent's skills and tools
+  - the popover shows the merge notes in between, **Compare** and **Update to vN** (this instance only)
+  - a pin of a fork that no longer exists offers **Use vN**
+- **Deleting referenced entities (PLAN.md 8.4):**
+  - the dialog lists who uses the entity, with **Local copy** or **Placeholder** for each (or for all)
+  - each of them gets a new version that embeds the deleted entity's content or marks it deleted
+  - the cascade then offers the new versions to what pins the old ones
+  - the canvas shows **local copy** and "Deleted: …" and resolves copies like library entities; merging with a placeholder is blocked
+- **Templates open on the canvas** (Projects → template card → **Open**), so their instances get update badges too.
+- **Fork housekeeping:**
+  - each project, template or pattern owns its forks; Save as template copies them
+  - unused forks are deleted on save, merge, discard or delete
+  - this covers the M5 leftovers: templates pinning promoted forks, and branches left by "Use library version"
+- **Settings → Restore defaults** adds back deleted built-in patterns (as their next version).
+- **Agents can't be merged while they pin a deleted skill or tool** (the M2 open issue).
+- **Tests:**
+  - 193 unit/API tests (11 new server tests, 11 new schema tests)
+  - 24 browser tests (4 new, in `e2e/propagation.spec.ts`)
+
+How to try it:
+1. `pnpm install`, then `pnpm dev`.
+2. Create a skill (**Skills**), two agents using it (**Agents**), and three projects using those agents (**Projects** → New project, add the agents from the palette). Set an override (e.g. Effort High) on one node. Save each project.
+3. Open the skill, change its description, Save, **Merge as v2**. **Update what uses it?** opens with both agents and, under them, the three projects' nodes.
+4. Uncheck one project's node, and see the count change. Uncheck an agent, and its projects' rows are disabled. **Apply**.
+5. Open the projects:
+   - the accepted ones pin the agents' v2, with the override still set
+   - the declined one shows a blue **v1 → v2** badge on the node; click it to see what changed, then **Update to v2**, then Save
+6. Open one agent: the header says how many users are still on older versions. Click it to reopen the preview.
+7. Delete an agent that a project uses: choose **Local copy** and confirm. The project's node shows **local copy**, and Problems stays empty. Try **Placeholder** on another: the node says "Deleted: …" and merging is blocked.
+8. **Projects → template → Open** shows a template on the canvas.
+9. Delete a built-in pattern, then **Settings → Restore defaults**.
+10. `pnpm check`, `pnpm test:e2e`.
+
+Deviations from PLAN.md:
+- **A placeholder keeps the reference in place** and marks it deleted, instead of removing it (PLAN.md 8.4 says "the reference is removed"). The effect is the same (it resolves to nothing and blocks merging), but nodes and their edges stay, and the editor can show the last known name. Agreed at planning as part of the local-copy design.
+- **Additions:** update badges in the agent editor; templates on the canvas (needed for PLAN.md 8.3, agreed at planning); a new "agents can't merge with missing skills or tools" rule.
+
+Open issues / questions:
+- **Copy and paste between projects drops local copies.** A pasted node that pins a deleted entity kept as a local copy shows it as missing in the target project. Carry the copies on the clipboard (M7), or leave it?
+- **Promoting a fork whose project already pinned the fork on `main`:** the cascade lists that project, because its `main` version pins a fork that no longer exists. That case is checked by default, so accepting gives the project a new `main` version, while the user expected only a draft save. Is that acceptable, or should the project being promoted from be left out of the cascade?
+- **The cascade can only offer what is on `main`.** A project draft that pins an old agent version, where the project's `main` doesn't, isn't listed; the canvas badge covers it when the project is opened. This follows the M2 rule that drafts don't count.
+- **One unhandled error was seen once in `pnpm test`** (attributed to `app.test.ts` after "404s on unknown kinds and ids"). Two full reruns and an isolated run didn't reproduce it, and all tests passed each time. Worth watching.

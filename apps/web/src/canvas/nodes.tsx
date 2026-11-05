@@ -515,6 +515,7 @@ function DecisionNodeView({ id, data, selected }: NodeProps<FlowNode>) {
     n.type === 'decision' && n.evaluator.type === 'agent' && n.evaluator.agent.kind === 'agent'
       ? n.evaluator.agent.agent
       : undefined;
+  const evaluatorName = useAgentName(evaluatorRef);
   if (n.type !== 'decision') return null;
   const evaluator =
     n.evaluator.type === 'deterministic'
@@ -551,7 +552,7 @@ function DecisionNodeView({ id, data, selected }: NodeProps<FlowNode>) {
               kind="agent"
               id={evaluatorRef.id}
               version={evaluatorRef.version}
-              name={evaluatorRef.id}
+              name={evaluatorName ?? evaluatorRef.id}
               className="mt-0.5"
               onUpdate={(to) => repin(`node/${id}/evaluator`, to)}
             />
