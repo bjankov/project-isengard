@@ -329,7 +329,7 @@ Built:
 - **Settings → Restore defaults** adds back deleted built-in patterns (as their next version).
 - **Agents can't be merged while they pin a deleted skill or tool** (the M2 open issue).
 - **Tests:**
-  - 193 unit/API tests (11 new server tests, 11 new schema tests)
+  - 182 unit/API tests (11 new server tests, 11 new schema tests)
   - 24 browser tests (4 new, in `e2e/propagation.spec.ts`)
 
 How to try it:
