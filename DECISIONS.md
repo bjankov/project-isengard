@@ -294,6 +294,7 @@ Format: date, milestone, decision, reason.
 - **Fork internals are edited in the pattern editor** on the fork branch (like **Edit fork** for agents), not inside the expanded frame. Expanded stays view state only.
 - **Overrides for agents inside instances** are keyed by node path (`review-k2f8/maker`).
 - **Every input port is required; output ports are optional.** No per-port setting in v1.
+- **Agent fork promotion is built in M5** too (merge to main as the next version, or save as a new agent), with the same flow as pattern forks. User decision.
 
 ### Schema
 - **Node paths** (`NodePath`) name nodes inside instances: node ids joined by `/`, with `@k` for the k-th copy of a repeated node (`team@1/worker@2`). The first segment is always the node of the outer graph. They key slot bindings (relative to the pattern) and project overrides (relative to the workflow).
@@ -308,3 +309,9 @@ Format: date, milestone, decision, reason.
 - **New rules:** `slot-in-workflow`, `agent-in-pattern`, `unbound-slot`, `port-unconnected`, `unknown-port` (an edge to a port that doesn't exist or points the wrong way), `pattern-cycle` (blocks saving, like an endless loop), `repeat-invalid`, and `missing-ref` for patterns. An instance counts as unreachable only when all of it is.
 - **Reading a shared store doesn't form a loop** (`analyzeLoops`). An agent that writes the store and reads it back is not looping: a read is access to state, not a trigger. Same reasoning as the M4 join rule (PLAN.md 7.5). Found because Moderated discussion and Blackboard did this.
 - **Built-in patterns** are data in `packages/schema` (`BUILTIN_PATTERNS`) with fixed ids `<slug>-builtn`, so Restore defaults (M6) can recognise them. Routing decisions that follow an agent's choice (Supervisor, Hierarchy, Handoff, discussion, Blackboard) are deterministic: the agent ends its reply with `{"next": "<label>"}` and a few lines of Python print that exit. Router uses an agent evaluator (a slot), Maker-checker a deterministic verdict check. Loop caps: 5 per worker exit, 8 per discussion or blackboard turn exit, 3 for Maker-checker. No default agents: the demo agents arrive in M7.
+
+### Server
+- **The built-ins are seeded on startup, once:** each built-in that never existed in the library (no entity, version or branch with its id) is added, all in one commit (`Add the built-in patterns`) tagged `v1`. Deleting an entity keeps its version tags, so a deleted built-in is not brought back; that is Restore defaults (M6). No separate "seeded" marker is needed.
+- **Patterns are checked like workflows,** in pattern mode: saving is refused for an uncapped loop or a pattern containing itself, merging for any error. Save and merge load every pinned pattern recursively, so the checks see inside instances; merge also loads the agents and presets bound inside them.
+- **`repeat` is written to `pattern.yaml`** after the graph. Templates don't have it.
+- **Fork promotion needs no new endpoint:** merging a named branch (`POST …/merge {branch}`) already creates the next version and deletes the branch. **Save as new** is a create from the fork's content plus `DELETE …/branches/<fork>`. Re-pinning the instance is done by the editor.

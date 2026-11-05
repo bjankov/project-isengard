@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { rmSync } from 'node:fs';
 import {
+  BUILTIN_PATTERNS,
   BranchName,
   DRAFT_BRANCH,
   MERGE_NOTE_MAX,
@@ -24,6 +25,7 @@ import {
   type EntityVersionSummary,
   type FileDiff,
   type HistoryResponse,
+  type Pattern,
   type ReferencesResponse,
   type VersionStatus,
 } from '@app/schema';
@@ -193,6 +195,7 @@ export class LibraryStore {
     }
 
     await store.tagUnversionedEntities();
+    await store.seedBuiltinPatterns();
     if (store.index.head !== (await git.head(MAIN_REF))) await store.rebuildIndex();
     return store;
   }
@@ -276,6 +279,34 @@ export class LibraryStore {
       }
     }
     if (ops.length > 0) await this.git.updateRefs(ops);
+  }
+
+  /**
+   * Add the built-in patterns (PLAN.md 10) that never existed in this library, in one commit
+   * with `v1` tags. A built-in the user deleted keeps its version tags, so it is not added back
+   * here; Settings → Restore defaults (M6) does that on request.
+   */
+  private async seedBuiltinPatterns(): Promise<void> {
+    const missing: Pattern[] = [];
+    for (const pattern of BUILTIN_PATTERNS) {
+      if (!(await this.idTaken('pattern', pattern.id))) missing.push(pattern);
+    }
+    if (missing.length === 0) return;
+    const entities = missing.map((p) => this.validate('pattern', p.id, p));
+    await this.commitToMain(
+      entities.flatMap((e) => this.writeOps('pattern', e)),
+      missing.length === BUILTIN_PATTERNS.length
+        ? 'Add the built-in patterns'
+        : `Add built-in patterns: ${missing.map((p) => p.name).join(', ')}`,
+      {
+        refOps: (hash) =>
+          missing.map((p) => ({
+            op: 'create' as const,
+            ref: entityRefs('pattern', p.id).tag(versionName(1)),
+            value: hash,
+          })),
+      },
+    );
   }
 
   /**

@@ -90,17 +90,23 @@ function graphLayout<K extends 'pattern' | 'template'>(dir: string, file: string
     idFromChild: (child) => child,
     serialize: (entity) => {
       const { id, name, description, workflow, layout } = entity;
-      return { [sem(id)]: toYaml({ name, description, ...workflow }), [lay(id)]: toJson(layout) };
+      // Patterns also store their repeat groups (after the graph they refer to).
+      const repeat = 'repeat' in entity ? { repeat: entity.repeat } : {};
+      return {
+        [sem(id)]: toYaml({ name, description, ...workflow, ...repeat }),
+        [lay(id)]: toJson(layout),
+      };
     },
     files: (id) => [sem(id), lay(id)],
     deserialize: (id, files) => {
-      const { name, description, nodes, edges } = fromYaml(files[sem(id)]);
+      const { name, description, nodes, edges, repeat } = fromYaml(files[sem(id)]);
       return {
         id,
         name,
         description,
         workflow: { nodes, edges },
         layout: fromJson(files[lay(id)]) ?? {},
+        ...(repeat === undefined ? {} : { repeat }),
       };
     },
   };

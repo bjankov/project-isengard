@@ -218,7 +218,7 @@ export async function buildApp(
       const kind = kindParam(req.params.kinds);
       let body = req.body;
       // Before anything else, so a refused project never leaves a workspace folder behind.
-      if (WORKFLOW_KINDS.has(kind)) checkSave(body);
+      if (WORKFLOW_KINDS.has(kind)) await checkSave(store, kind, body);
       if (kind === 'project') {
         body =
           req.query.createWorkspace === '1'
@@ -248,7 +248,7 @@ export async function buildApp(
       const previous = await store.getLatest('project', req.params.id);
       body = await prepareProject(body, previous.workspacePath);
     }
-    if (WORKFLOW_KINDS.has(kind)) checkSave(body);
+    if (WORKFLOW_KINDS.has(kind)) await checkSave(store, kind, body, req.params.id);
     return store.update(kind, req.params.id, body, { branch: req.query.branch });
   });
 
@@ -285,14 +285,14 @@ export async function buildApp(
       }
       const kind = kindParam(req.params.kinds);
       const branch = typeof body.branch === 'string' ? body.branch : undefined;
-      if (kind === 'project' || kind === 'template') {
+      if (WORKFLOW_KINDS.has(kind)) {
         const entity = await store
           .get(kind, req.params.id, branch ?? DRAFT_BRANCH)
           .catch((err: unknown) => {
             if (err instanceof NotFoundError) return undefined; // merge() reports it
             throw err;
           });
-        if (entity) await checkMerge(store, entity);
+        if (entity && 'workflow' in entity) await checkMerge(store, kind, req.params.id, entity);
       }
       return store.merge(kind, req.params.id, {
         branch,
