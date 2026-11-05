@@ -449,4 +449,7 @@ Format: date, milestone, decision, reason.
 ### M6 review answers (2026-11-05, user decisions)
 - **The canvas clipboard carries local copies.** Copying keeps the local copies and placeholders the copied nodes reach (via `pruneLocal`). Pasting adds them to the target workflow, and copies already there win: the same key always holds the same pinned version.
 - **The container a fork is promoted from is left out of the cascade** (`exclude` on `POST /api/cascade/preview` and `/apply`). Promoting saves its draft, which already pins the new version, and its next merge publishes that. Offering it a separate new `main` version as well was confusing. Other entities pinning the promoted fork (e.g. old templates) are still listed.
-- **The flaky unhandled error in `pnpm test`** is noted in PROGRESS.md, to hunt down later. It was captured as an EPIPE on a git child's stdin (`git.ts:180`); the details and a probable fix are in the note.
+- **The flaky unhandled error in `pnpm test` is fixed** (the user asked to fix it right away, since the cause was known).
+  - **Cause:** an EPIPE when writing to a git child's stdin after git had already exited. Most git commands never read stdin.
+  - **Fix:** `LibraryGit.run` ignores errors on `child.stdin`. Failures still surface through git's exit code.
+  - **Test:** a regression test reproduces the EPIPE deterministically.

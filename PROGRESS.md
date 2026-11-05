@@ -329,7 +329,7 @@ Built:
 - **Settings → Restore defaults** adds back deleted built-in patterns (as their next version).
 - **Agents can't be merged while they pin a deleted skill or tool** (the M2 open issue).
 - **Tests:**
-  - 182 unit/API tests (11 new server tests, 11 new schema tests)
+  - 184 unit/API tests (11 new server tests, 11 new schema tests, 2 for the git EPIPE fix)
   - copy and paste carries local copies; the project a fork is promoted from is left out of the cascade (follow-up)
   - 24 browser tests (4 new, in `e2e/propagation.spec.ts`)
 
@@ -355,8 +355,7 @@ Open issues / questions (answered by the user on 2026-11-05):
 - **Copy and paste between projects dropped local copies.** **Answer: the clipboard carries them.** Done: copied nodes take the local copies and placeholders they reach, and pasting adds them to the target workflow (covered by the browser test).
 - **Promoting a fork whose project already pinned it on `main`** made the cascade offer that project a new `main` version. That wasn't a second `main`: the project's one `main` version still pinned the deleted fork, while its draft already pinned the promoted version. **Answer: too much of a headache.** Done: the project, template or pattern the fork is promoted from is left out of the cascade. Its draft already pins the new version, and its next merge publishes it.
 - **The cascade can only offer what is on `main`.** A project draft that pins an old agent version, where the project's `main` doesn't, isn't listed; the canvas badge covers it when the project is opened. This follows the M2 rule that drafts don't count.
-- **Flaky test, to hunt down later (user decision):** `pnpm test` occasionally reports one unhandled error, attributed to whichever `app.test.ts` test ran last. Every test still passes. It was seen 3 times in about 8 runs.
-  - **Captured:** `Error: write EPIPE` at `apps/server/src/git.ts:180` (`child.stdin.end(opts.input ?? '')` in `LibraryGit.run`, from M2).
-  - **Likely cause:** `run` always writes to the child's stdin, even for git commands that don't read it (`read-tree`, `ls-files`, `write-tree`…). If git exits before Node writes, the write fails with EPIPE. `child.stdin` has no `'error'` listener, so the error becomes an uncaught exception.
-  - **Why it matters beyond tests:** in the running server, the same uncaught exception could crash the process.
-  - **Probable fix (not applied):** ignore errors on `child.stdin` (`child.stdin.on('error', () => {})`); git's exit code still reports real failures. Optionally, only pipe stdin when there is input.
+- **Flaky test: found and fixed.** `pnpm test` occasionally reported one unhandled error (3 of about 8 runs), while every test still passed.
+  - **Cause:** `Error: write EPIPE` in `LibraryGit.run` (`apps/server/src/git.ts`, from M2). `run` always writes to git's stdin, even for commands that never read it. If git exits first, the write fails. `child.stdin` had no `'error'` listener, so the error became an uncaught exception, which could also have crashed the running server.
+  - **Fix:** `child.stdin.on('error', …)` ignores it; git's exit code still reports real failures.
+  - **Test:** `apps/server/src/git.test.ts` writes 8 MB to `git --version`. Without the fix it fails with the same EPIPE on every run; with it, it passes. Several full `pnpm test` runs since then are clean.
