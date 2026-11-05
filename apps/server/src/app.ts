@@ -6,7 +6,13 @@ import {
   type DiffResponse,
   type DiscardBranchResponse,
   type HistoryResponse,
+  type CascadeApplyRequest,
+  type CascadePreviewRequest,
+  type CascadeRoot,
   type CreateBranchRequest,
+  type DeleteRequest,
+  type DeleteWithReferencesResponse,
+  type Agent,
   type MergeRequest,
   type VersionStatus,
   type WorkspaceCheck,
@@ -21,7 +27,16 @@ import {
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import type { AppConfig } from './config.js';
 import { checkGitInstalled } from './git.js';
-import { WORKFLOW_KINDS, WorkflowError, checkMerge, checkSave } from './workflow-check.js';
+import { applyCascade, previewCascade } from './cascade.js';
+import { deleteWithReferences } from './deletion.js';
+import { adoptForks, cleanupForks, unusedForkOps } from './forks.js';
+import {
+  WORKFLOW_KINDS,
+  WorkflowError,
+  checkAgentMerge,
+  checkMerge,
+  checkSave,
+} from './workflow-check.js';
 import {
   checkNewWorkspace,
   checkWorkspace,
@@ -136,6 +151,35 @@ export async function buildApp(
     store.updateSettings(req.body),
   );
 
+  app.post('/api/settings/restore-defaults', async () => store.restoreBuiltinPatterns());
+
+  function parseRoots(body: { roots?: unknown } | undefined): CascadeRoot[] {
+    const roots = body?.roots;
+    if (!Array.isArray(roots) || roots.length === 0) {
+      throw new BadRequestError('"roots" must list at least one entity');
+    }
+    return roots.map((r: unknown) => {
+      const { kind, id } = (r ?? {}) as { kind?: unknown; id?: unknown };
+      if (typeof kind !== 'string' || typeof id !== 'string' || !kindFromPlural(`${kind}s`)) {
+        throw new BadRequestError('each root needs a "kind" and an "id"');
+      }
+      return { kind: kind as EntityKind, id };
+    });
+  }
+
+  /** Cascade preview (PLAN.md 8.2): who pins an older version of the roots, transitively. */
+  app.post<{ Body: CascadePreviewRequest | undefined }>('/api/cascade/preview', async (req) =>
+    previewCascade(store, parseRoots(req.body)),
+  );
+
+  app.post<{ Body: CascadeApplyRequest | undefined }>('/api/cascade/apply', async (req) => {
+    const accept = req.body?.accept;
+    if (!Array.isArray(accept) || !accept.every((a) => typeof a === 'string')) {
+      throw new BadRequestError('"accept" must be a list of case ids');
+    }
+    return applyCascade(store, parseRoots(req.body), accept);
+  });
+
   app.post<{ Body: { path?: unknown } | undefined }>(
     '/api/workspace/check',
     async (req): Promise<WorkspaceCheck> =>
@@ -225,7 +269,10 @@ export async function buildApp(
             ? await createProjectWorkspace(body)
             : await prepareProject(body);
       }
-      const result = await store.create(kind, body);
+      // A new project or template gets its own copies of the forks it pins.
+      const result = await store.create(kind, body, {
+        prepare: (id, entity) => adoptForks(store, kind, id, entity),
+      });
       return reply.status(201).send(result);
     },
   );
@@ -249,11 +296,26 @@ export async function buildApp(
       body = await prepareProject(body, previous.workspacePath);
     }
     if (WORKFLOW_KINDS.has(kind)) await checkSave(store, kind, body, req.params.id);
-    return store.update(kind, req.params.id, body, { branch: req.query.branch });
+    const result = await store.update(kind, req.params.id, body, { branch: req.query.branch });
+    await cleanupForks(store, kind, req.params.id);
+    return result;
   });
 
-  app.delete<{ Params: { kinds: string; id: string } }>('/api/:kinds/:id', async (req) =>
-    store.delete(kindParam(req.params.kinds), req.params.id),
+  /** Refused (409, with the references) while entities on main still pin it. */
+  app.delete<{ Params: { kinds: string; id: string } }>('/api/:kinds/:id', async (req) => {
+    const kind = kindParam(req.params.kinds);
+    const extraRefOps = await unusedForkOps(store, kind, req.params.id, { deleting: true });
+    return store.delete(kind, req.params.id, { extraRefOps });
+  });
+
+  /**
+   * Delete an entity that is still referenced (PLAN.md 8.4): each referencing entity keeps a
+   * local copy or gets a placeholder, as chosen.
+   */
+  app.post<{ Params: { kinds: string; id: string }; Body: DeleteRequest | undefined }>(
+    '/api/:kinds/:id/delete',
+    async (req): Promise<DeleteWithReferencesResponse> =>
+      deleteWithReferences(store, kindParam(req.params.kinds), req.params.id, req.body),
   );
 
   app.get<{ Params: { kinds: string; id: string } }>(
@@ -294,11 +356,19 @@ export async function buildApp(
           });
         if (entity && 'workflow' in entity) await checkMerge(store, kind, req.params.id, entity);
       }
-      return store.merge(kind, req.params.id, {
+      if (kind === 'agent') {
+        const agent = await store
+          .get('agent', req.params.id, branch ?? DRAFT_BRANCH)
+          .catch(() => undefined);
+        if (agent) await checkAgentMerge(store, agent as Agent);
+      }
+      const result = await store.merge(kind, req.params.id, {
         branch,
         force: body.force === true,
         note: body.note,
       });
+      await cleanupForks(store, kind, req.params.id);
+      return result;
     },
   );
 
@@ -321,13 +391,12 @@ export async function buildApp(
 
   app.delete<{ Params: { kinds: string; id: string; branch: string } }>(
     '/api/:kinds/:id/branches/:branch',
-    async (req): Promise<DiscardBranchResponse> => ({
-      status: await store.discardBranch(
-        kindParam(req.params.kinds),
-        req.params.id,
-        req.params.branch,
-      ),
-    }),
+    async (req): Promise<DiscardBranchResponse> => {
+      const kind = kindParam(req.params.kinds);
+      const status = await store.discardBranch(kind, req.params.id, req.params.branch);
+      await cleanupForks(store, kind, req.params.id);
+      return { status };
+    },
   );
 
   app.get<{ Params: { kinds: string; id: string } }>('/api/:kinds/:id/references', async (req) => {

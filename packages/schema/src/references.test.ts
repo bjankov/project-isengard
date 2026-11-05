@@ -6,6 +6,7 @@ import {
   type CascadeCase,
   type CascadePreview,
 } from './cascade.js';
+import type { Agent } from './agent.js';
 import { parseEntity } from './entities.js';
 import { parseRefKey, refKey } from './ids.js';
 import {
@@ -92,7 +93,7 @@ describe('ref locations', () => {
 describe('local copies', () => {
   it('resolve pinned references and count as references', () => {
     const ref = { kind: 'skill' as const, id: skill.id, version: 'v1' };
-    const withCopy = { ...agent, ...localCopyEntries(ref, skill) };
+    const withCopy = { ...agent, ...localCopyEntries(ref, skill) } as Agent;
     const lookup = localLookup([withCopy]);
     expect(lookup.copy(ref)?.name).toBe(skill.name);
     expect(lookup.copy({ ...ref, version: 'v2' })).toBeUndefined();
@@ -101,7 +102,7 @@ describe('local copies', () => {
 
   it('move a copied entity’s own copies up next to it', () => {
     const skillRef = { kind: 'skill' as const, id: skill.id, version: 'v1' };
-    const agentWithCopy = { ...agent, ...localCopyEntries(skillRef, skill) };
+    const agentWithCopy = { ...agent, ...localCopyEntries(skillRef, skill) } as Agent;
     const agentRef = { kind: 'agent' as const, id: agent.id, version: 'v2' };
     const entries = localCopyEntries(agentRef, agentWithCopy);
     expect(Object.keys(entries.localCopies).sort()).toEqual(
@@ -121,7 +122,7 @@ describe('local copies', () => {
         ...localCopyEntries(unused, skill).localCopies,
       },
       deletedRefs: { [refKey(unused)]: { name: 'gone' } },
-    };
+    } as Agent;
     const pruned = pruneLocal('agent', a);
     expect(Object.keys(pruned.localCopies ?? {})).toEqual([refKey(ref)]);
     expect(pruned.deletedRefs).toBeUndefined();

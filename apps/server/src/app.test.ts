@@ -195,11 +195,13 @@ describe.each(ENTITY_KINDS)('CRUD for %s', (kind) => {
 
   it('creates, reads, updates and deletes, committing each change as files', async () => {
     await start();
-    // The sample workflows pin agents this library doesn't have, which would block merging.
+    // The samples pin entities this library doesn't have, which would block merging.
     const input =
       kind === 'project' || kind === 'template'
         ? { ...sampleInput(kind), workflow: MINIMAL_WORKFLOW, layout: { nodes: {} } }
-        : sampleInput(kind);
+        : kind === 'agent'
+          ? { ...sampleInput(kind), skills: [], tools: [] }
+          : sampleInput(kind);
 
     // create
     const created = await api<{ entity: { id: string; name: string }; commit: { hash: string } }>(

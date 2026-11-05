@@ -77,6 +77,27 @@ export interface ReferencedErrorBody {
   references: (EntitySummary & { version: string })[];
 }
 
+/**
+ * What happens to an entity that pins one being deleted (PLAN.md 8.4): it keeps a local copy
+ * of the deleted entity and keeps working, or the reference becomes a placeholder.
+ */
+export type DeleteResolution = 'copy' | 'placeholder';
+
+/** Body of `POST /api/<kind>/<id>/delete`: delete an entity that is still referenced. */
+export interface DeleteRequest {
+  /** For every referencing entity not listed in `each`. */
+  all?: DeleteResolution;
+  /** Per referencing entity, keyed `<kind>/<id>`. */
+  each?: Record<string, DeleteResolution>;
+}
+
+/** `POST /api/<kind>/<id>/delete`. */
+export interface DeleteWithReferencesResponse {
+  commit: CommitInfo;
+  /** Referencing entities that got a new main version (with the copy or placeholder). */
+  updated: { kind: EntityKind; id: string; version: string }[];
+}
+
 export interface ReferencesResponse {
   /** Entities this entity references. */
   outgoing: Ref[];

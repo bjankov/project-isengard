@@ -9,8 +9,10 @@ import {
   Settings,
   collectRefs,
   entityBranchName,
+  isReferrerKind,
   makeEntityId,
   normalizeMergeNote,
+  pruneLocal,
   safeParseEntity,
   versionName,
   versionNumber,
@@ -18,6 +20,7 @@ import {
   type BranchInfo,
   type CommitInfo,
   type DiffResponse,
+  type AnyEntity,
   type EntityByKind,
   type EntityKind,
   type EntityListItem,
@@ -82,6 +85,31 @@ export class ReferencedError extends Error {
     super(`${kind} "${id}" is still used by ${names}. Remove it from those first.`);
     this.name = 'ReferencedError';
   }
+}
+
+/** One commit on main in `applyBatch`: write an entity (and tag a version), or remove it. */
+export interface MainStep {
+  kind: EntityKind;
+  id: string;
+  /** Null removes the entity from main (its branches are not touched here). */
+  entity: AnyEntity | null;
+  message: string;
+  /** Tag this main version (e.g. `v3`) on the commit. */
+  version?: string;
+}
+
+/** One commit on an entity branch in `applyBatch`. */
+export interface BranchStep {
+  kind: EntityKind;
+  id: string;
+  branch: string;
+  entity: AnyEntity;
+  message: string;
+  /**
+   * Also make this main step's commit a parent, so the branch counts as up to date with that
+   * main version (merging the branch later sees no conflict).
+   */
+  mainStep?: number;
 }
 
 export interface RebuildResult {
@@ -310,6 +338,46 @@ export class LibraryStore {
   }
 
   /**
+   * Settings → Restore defaults (PLAN.md 8.4): add back every built-in pattern missing from main
+   * under its old id, as its next version (`v1` if it never existed). Built-ins that exist,
+   * edited or not, are not touched.
+   */
+  async restoreBuiltinPatterns(): Promise<{
+    restored: { id: string; name: string; version: string }[];
+    commit: CommitInfo | null;
+  }> {
+    return this.git.exclusive(async () => {
+      const restored: { id: string; name: string; version: string }[] = [];
+      const entities: Pattern[] = [];
+      for (const pattern of BUILTIN_PATTERNS) {
+        if (await this.exists('pattern', pattern.id)) continue;
+        const tags = await this.git.listRefs(entityRefs('pattern', pattern.id).tagPrefix);
+        const version = versionName((versionsOf(tags)[0] ?? 0) + 1);
+        entities.push(this.validate('pattern', pattern.id, pattern));
+        restored.push({ id: pattern.id, name: pattern.name, version });
+      }
+      if (entities.length === 0) return { restored, commit: null };
+      const commit = requireCommit(
+        await this.commitToMain(
+          entities.flatMap((e) => this.writeOps('pattern', e)),
+          `Restore built-in patterns: ${restored.map((r) => r.name).join(', ')}`,
+          {
+            refOps: (hash) =>
+              restored.map((r) => ({
+                op: 'create' as const,
+                ref: entityRefs('pattern', r.id).tag(r.version),
+                value: hash,
+              })),
+          },
+        ),
+        'restore',
+      );
+      for (const e of entities) this.index.upsert(this.entryOf('pattern', e), commit.hash);
+      return { restored, commit };
+    });
+  }
+
+  /**
    * Resolve a version spec to something git can read: `main` (or nothing), a version (`v2`),
    * a branch of this entity (`draft`) or a commit hash.
    */
@@ -388,6 +456,52 @@ export class LibraryStore {
   async getLatest<K extends EntityKind>(kind: K, id: string): Promise<EntityByKind[K]> {
     const hasDraft = await this.git.revParse(entityRefs(kind, id).branch(DRAFT_BRANCH));
     return this.get(kind, id, hasDraft ? DRAFT_BRANCH : undefined);
+  }
+
+  /** Version state of every entity of a kind (current main version, draft flag). */
+  async versionMap(kind: EntityKind): Promise<Map<string, EntityVersionSummary>> {
+    return this.versionSummaries(kind);
+  }
+
+  /** Whether the entity has a branch of that name. */
+  async hasBranch(kind: EntityKind, id: string, branch: string): Promise<boolean> {
+    if (!BranchName.safeParse(branch).success) return false;
+    return (await this.git.revParse(entityRefs(kind, id).branch(branch))) !== undefined;
+  }
+
+  /** Every branch of the given kinds except drafts, e.g. the forks pinned by projects. */
+  async namedBranches(
+    kinds: readonly EntityKind[],
+  ): Promise<{ kind: EntityKind; id: string; branch: string; head: string }[]> {
+    const out: { kind: EntityKind; id: string; branch: string; head: string }[] = [];
+    for (const { ref, oid } of await this.git.listRefs(...kinds.map((k) => `refs/heads/${k}`))) {
+      const m = ENTITY_REF.exec(ref);
+      if (!m || m[4] === DRAFT_BRANCH) continue;
+      out.push({ kind: m[2] as EntityKind, id: m[3] ?? '', branch: m[4] ?? '', head: oid });
+    }
+    return out;
+  }
+
+  /** Commit a branch of an entity points to, if it exists. */
+  async branchHead(kind: EntityKind, id: string, branch: string): Promise<string | undefined> {
+    if (!BranchName.safeParse(branch).success) return undefined;
+    return this.git.revParse(entityRefs(kind, id).branch(branch));
+  }
+
+  /** Full git ref of an entity branch. */
+  branchRef(kind: EntityKind, id: string, branch: string): string {
+    return entityRefs(kind, id).branch(branch);
+  }
+
+  /** Apply ref changes (e.g. deleting unused forks) in one transaction. */
+  async updateRefs(ops: RefOp[]): Promise<void> {
+    if (ops.length === 0) return;
+    await this.git.exclusive(() => this.git.updateRefs(ops));
+  }
+
+  /** Summary of an entity on main, from the index. */
+  summary(kind: EntityKind, id: string): EntitySummary | undefined {
+    return this.index.summary(kind, id);
   }
 
   references(kind: EntityKind, id: string): ReferencesResponse {
@@ -495,7 +609,8 @@ export class LibraryStore {
     const body = input && typeof input === 'object' ? input : {};
     const result = safeParseEntity(kind, { ...body, id });
     if (!result.success) throw new EntityValidationError(`invalid ${kind}`, result.error);
-    return result.data;
+    // Local copies and placeholders nothing uses any more are dropped.
+    return isReferrerKind(kind) ? pruneLocal(kind, result.data) : result.data;
   }
 
   private writeOps<K extends EntityKind>(kind: K, entity: EntityByKind[K]): TreeOp[] {
@@ -510,18 +625,31 @@ export class LibraryStore {
   async create<K extends EntityKind>(
     kind: K,
     input: unknown,
+    opts: {
+      /**
+       * Adjust the validated entity once its id is known, with extra ref changes made in the
+       * same transaction (e.g. copying the forks it pins). Must not take the git lock.
+       */
+      prepare?: (
+        id: string,
+        entity: EntityByKind[K],
+      ) => Promise<{ entity: EntityByKind[K]; refOps: RefOp[] }>;
+    } = {},
   ): Promise<{ entity: EntityByKind[K]; commit: CommitInfo; status: VersionStatus }> {
     const name = (input as { name?: unknown } | null)?.name;
     const base = typeof name === 'string' ? name : kind;
     return this.git.exclusive(async () => {
       let id = makeEntityId(base);
       while (await this.idTaken(kind, id)) id = makeEntityId(base);
-      const entity = this.validate(kind, id, input);
+      let entity = this.validate(kind, id, input);
+      let extraRefs: RefOp[] = [];
+      if (opts.prepare) ({ entity, refOps: extraRefs } = await opts.prepare(id, entity));
       const message = `Create ${describe(kind, entity)}`;
       const commit = requireCommit(
         await this.commitToMain(this.writeOps(kind, entity), message, {
           refOps: (hash) => [
             { op: 'create', ref: entityRefs(kind, id).tag(versionName(1)), value: hash },
+            ...extraRefs,
           ],
         }),
         message,
@@ -688,8 +816,95 @@ export class LibraryStore {
     });
   }
 
+  /**
+   * Several changes at once, all or nothing: a chain of commits on main (one per step, each
+   * optionally tagged with a version), commits on entity branches, and extra ref changes. Main,
+   * the tags and the branches move in one ref transaction. Used by the cascade and by deleting
+   * a referenced entity.
+   */
+  async applyBatch(
+    mainSteps: MainStep[],
+    branchSteps: BranchStep[],
+    extraRefOps: RefOp[] = [],
+  ): Promise<{ commits: CommitInfo[]; head: string | undefined }> {
+    return this.git.exclusive(async () => {
+      const base = await this.git.head(MAIN_REF);
+      if (!base) throw new Error('main has no commits');
+      let prev = base;
+      const commits: CommitInfo[] = [];
+      const refOps: RefOp[] = [];
+      const touched: string[] = [];
+      for (const step of mainSteps) {
+        const root = layoutOf(step.kind).root(step.id);
+        const ops: TreeOp[] = [{ op: 'remove', path: root }];
+        if (step.entity) ops.push(...this.writeOps(step.kind, step.entity));
+        const tree = await this.git.writeTree(prev, ops);
+        const hash = await this.git.commitTree(tree, [prev], step.message);
+        commits.push({ hash, message: step.message });
+        touched.push(...filesOf(ops));
+        if (step.version) {
+          refOps.push({
+            op: 'create',
+            ref: entityRefs(step.kind, step.id).tag(step.version),
+            value: hash,
+          });
+        }
+        prev = hash;
+      }
+      if (prev !== base) refOps.unshift({ op: 'update', ref: MAIN_REF, value: prev, old: base });
+      for (const step of branchSteps) {
+        const ref = entityRefs(step.kind, step.id).branch(step.branch);
+        const head = await this.git.revParse(ref);
+        if (!head) throw new NotFoundError(step.kind, step.id, `branch "${step.branch}"`);
+        const root = layoutOf(step.kind).root(step.id);
+        const tree = await this.git.writeTree(head, [
+          { op: 'remove', path: root },
+          ...this.writeOps(step.kind, step.entity),
+        ]);
+        const extra = step.mainStep === undefined ? undefined : commits[step.mainStep]?.hash;
+        const hash = await this.git.commitTree(tree, extra ? [head, extra] : [head], step.message);
+        refOps.push({ op: 'update', ref, value: hash, old: head });
+      }
+      refOps.push(...extraRefOps);
+      if (refOps.length === 0) return { commits, head: base };
+      await this.git.updateRefs(refOps);
+      if (prev !== base) {
+        await this.git.syncWorkingTree([...new Set(touched)]);
+        mainSteps.forEach((step, i) => {
+          const hash = commits[i]?.hash ?? prev;
+          if (step.entity) this.index.upsert(this.entryOf(step.kind, step.entity), hash);
+          else this.index.remove(step.kind, step.id, hash);
+        });
+      }
+      return { commits, head: prev };
+    });
+  }
+
+  /** Version tag refs of an entity, highest number first. */
+  async nextVersion(kind: EntityKind, id: string): Promise<string> {
+    return versionName(
+      (versionsOf(await this.git.listRefs(entityRefs(kind, id).tagPrefix))[0] ?? 0) + 1,
+    );
+  }
+
+  /** Ref ops that delete every branch of an entity. */
+  async deleteBranchOps(
+    kind: EntityKind,
+    id: string,
+    only?: (branch: string) => boolean,
+  ): Promise<RefOp[]> {
+    const refs = entityRefs(kind, id);
+    return (await this.git.listRefs(refs.branchPrefix))
+      .filter((b) => !only || only(b.ref.slice(refs.branchPrefix.length + 1)))
+      .map((b) => ({ op: 'delete' as const, ref: b.ref, old: b.oid }));
+  }
+
   /** Remove from main and delete the entity's branches. Version tags stay in history. */
-  async delete(kind: EntityKind, id: string): Promise<{ commit: CommitInfo }> {
+  async delete(
+    kind: EntityKind,
+    id: string,
+    opts: { extraRefOps?: RefOp[] } = {},
+  ): Promise<{ commit: CommitInfo }> {
     return this.git.exclusive(async () => {
       if (!(await this.exists(kind, id))) throw new NotFoundError(kind, id);
       const users = this.index
@@ -711,7 +926,10 @@ export class LibraryStore {
       const message = `Delete ${kind} ${id}${summary ? ` (${summary.name})` : ''}`;
       const commit = requireCommit(
         await this.commitToMain([{ op: 'remove', path: layoutOf(kind).root(id) }], message, {
-          refOps: () => branches.map((b) => ({ op: 'delete', ref: b.ref, old: b.oid })),
+          refOps: () => [
+            ...branches.map((b): RefOp => ({ op: 'delete', ref: b.ref, old: b.oid })),
+            ...(opts.extraRefOps ?? []),
+          ],
         }),
         message,
       );

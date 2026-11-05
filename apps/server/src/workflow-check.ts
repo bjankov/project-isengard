@@ -3,6 +3,10 @@ import {
   WorkflowGraph,
   checkWorkflow,
   flattenWorkflow,
+  localOf,
+  refKey,
+  type DeletedRef,
+  type Ref,
   type Agent,
   type AgentRef,
   type EntityKind,
@@ -14,7 +18,7 @@ import {
   type WorkflowResolver,
 } from '@app/schema';
 import { z } from 'zod';
-import { NotFoundError, type LibraryStore } from './store/library-store.js';
+import { BadRequestError, NotFoundError, type LibraryStore } from './store/library-store.js';
 
 /** Entity kinds whose content is a workflow graph checked by `checkWorkflow`. */
 export const WORKFLOW_KINDS: ReadonlySet<EntityKind> = new Set(['project', 'template', 'pattern']);
@@ -31,18 +35,62 @@ export class WorkflowError extends Error {
 
 const key = (ref: { id: string; version: string }) => `${ref.id}@${ref.version}`;
 
-async function load<T>(fn: () => Promise<T>): Promise<T | null> {
-  try {
-    return await fn();
-  } catch (err) {
-    if (err instanceof NotFoundError) return null;
-    throw err;
+/**
+ * Entities that aren't in the library (yet): the content a cascade is about to write, keyed by
+ * `refKey`. Looked up before the library.
+ */
+export type Overlay = ReadonlyMap<string, unknown>;
+
+/**
+ * Loads pinned entities: from the overlay, the library, or else the local copies of the
+ * entities loaded so far (the workflow's own, then every pattern and agent it pins).
+ * Null when the entity is gone.
+ */
+class Loader {
+  private readonly copies = new Map<string, unknown>();
+  private readonly deleted = new Map<string, DeletedRef>();
+
+  constructor(
+    private readonly store: LibraryStore,
+    private readonly overlay: Overlay | undefined,
+    local: unknown[],
+  ) {
+    for (const e of local) this.addLocal(e);
   }
+
+  addLocal(entity: unknown): void {
+    const { localCopies, deletedRefs } = localOf(entity);
+    for (const [k, c] of Object.entries(localCopies)) this.copies.set(k, c.entity);
+    for (const [k, d] of Object.entries(deletedRefs)) this.deleted.set(k, d);
+  }
+
+  async load<K extends 'agent' | 'tool' | 'pattern'>(
+    ref: Ref & { kind: K },
+  ): Promise<EntityOf<K> | null> {
+    const k = refKey(ref);
+    const pending = this.overlay?.get(k);
+    if (pending) return pending as EntityOf<K>;
+    try {
+      return (await this.store.get(ref.kind, ref.id, ref.version)) as EntityOf<K>;
+    } catch (err) {
+      if (!(err instanceof NotFoundError)) throw err;
+      return (this.copies.get(k) as EntityOf<K> | undefined) ?? null;
+    }
+  }
+
+  deletedRef = (ref: Ref): DeletedRef | undefined => this.deleted.get(refKey(ref));
 }
+
+interface EntityOfKind {
+  agent: Agent;
+  tool: ToolPreset;
+  pattern: Pattern;
+}
+type EntityOf<K extends keyof EntityOfKind> = EntityOfKind[K];
 
 /** Every pattern the graph pins, and the patterns those nest, by `id@version`. */
 async function loadPatterns(
-  store: LibraryStore,
+  loader: Loader,
   graph: WorkflowGraph,
 ): Promise<Map<string, Pattern | null>> {
   const patterns = new Map<string, Pattern | null>();
@@ -53,9 +101,12 @@ async function loadPatterns(
   enqueue(graph);
   for (let ref = queue.shift(); ref; ref = queue.shift()) {
     if (patterns.has(key(ref))) continue;
-    const pattern = await load(() => store.get('pattern', ref.id, ref.version));
+    const pattern = await loader.load(ref);
     patterns.set(key(ref), pattern);
-    if (pattern) enqueue(pattern.workflow);
+    if (pattern) {
+      loader.addLocal(pattern);
+      enqueue(pattern.workflow);
+    }
   }
   return patterns;
 }
@@ -68,12 +119,18 @@ async function loadPatterns(
 export async function loadResolver(
   store: LibraryStore,
   graph: WorkflowGraph,
-  opts: { library?: boolean } = {},
+  opts: {
+    library?: boolean;
+    /** The entity the graph belongs to (its local copies resolve deleted entities). */
+    container?: unknown;
+    overlay?: Overlay;
+  } = {},
 ): Promise<WorkflowResolver> {
-  const patterns = await loadPatterns(store, graph);
+  const loader = new Loader(store, opts.overlay, opts.container ? [opts.container] : []);
+  const patterns = await loadPatterns(loader, graph);
   const pattern = (ref: PatternRef) => patterns.get(key(ref));
   if (opts.library === false) {
-    return { agent: () => undefined, tool: () => undefined, pattern };
+    return { agent: () => undefined, tool: () => undefined, pattern, deleted: loader.deletedRef };
   }
 
   const agents = new Map<string, Agent | null>();
@@ -89,18 +146,21 @@ export async function loadResolver(
   }
   for (const ref of agentRefs) {
     if (agents.has(key(ref))) continue;
-    const agent = await load(() => store.get('agent', ref.id, ref.version));
+    const agent = await loader.load(ref);
     agents.set(key(ref), agent);
-    if (agent) toolRefs.push(...agent.tools);
+    if (agent) {
+      loader.addLocal(agent);
+      toolRefs.push(...agent.tools);
+    }
   }
   for (const ref of toolRefs) {
-    if (!tools.has(key(ref)))
-      tools.set(key(ref), await load(() => store.get('tool', ref.id, ref.version)));
+    if (!tools.has(key(ref))) tools.set(key(ref), await loader.load(ref));
   }
   return {
     agent: (ref) => agents.get(key(ref)),
     tool: (ref) => tools.get(key(ref)),
     pattern,
+    deleted: loader.deletedRef,
   };
 }
 
@@ -126,7 +186,7 @@ export async function checkSave(
 ): Promise<void> {
   const parsed = graphOf(body);
   if (!parsed) return;
-  const resolver = await loadResolver(store, parsed.graph, { library: false });
+  const resolver = await loadResolver(store, parsed.graph, { library: false, container: body });
   const { problems } = checkWorkflow(parsed.graph, {
     kind: kind === 'pattern' ? 'pattern' : 'workflow',
     resolver,
@@ -149,18 +209,62 @@ export async function checkMerge(
   id: string,
   entity: { workflow: WorkflowGraph; repeat?: RepeatGroup[] },
 ): Promise<void> {
-  const resolver = await loadResolver(store, entity.workflow);
+  const errors = await workflowErrors(store, kind, id, entity);
+  if (errors.length > 0) {
+    throw new WorkflowError(
+      `Can’t merge: ${errors.length === 1 ? 'there is 1 error' : `there are ${errors.length} errors`} in the ${kind === 'pattern' ? 'pattern' : 'workflow'}. ${errors[0]?.message ?? ''}`.trim(),
+      errors,
+    );
+  }
+}
+
+/** Every error of a workflow entity (what blocks merging), with an optional overlay. */
+export async function workflowErrors(
+  store: LibraryStore,
+  kind: EntityKind,
+  id: string,
+  entity: { workflow: WorkflowGraph; repeat?: RepeatGroup[] },
+  overlay?: Overlay,
+): Promise<WorkflowProblem[]> {
+  const resolver = await loadResolver(store, entity.workflow, {
+    container: entity,
+    ...(overlay ? { overlay } : {}),
+  });
   const { problems } = checkWorkflow(entity.workflow, {
     kind: kind === 'pattern' ? 'pattern' : 'workflow',
     resolver,
     repeat: entity.repeat ?? [],
     selfId: id,
   });
-  const errors = problems.filter((p) => p.severity === 'error');
-  if (errors.length > 0) {
-    throw new WorkflowError(
-      `Can’t merge: ${errors.length === 1 ? 'there is 1 error' : `there are ${errors.length} errors`} in the ${kind === 'pattern' ? 'pattern' : 'workflow'}. ${errors[0]?.message ?? ''}`.trim(),
-      errors,
+  return problems.filter((p) => p.severity === 'error');
+}
+
+/**
+ * A version on main must be complete: an agent can't be merged while it pins a skill or tool
+ * preset that no longer exists (and isn't kept as a local copy).
+ */
+export async function checkAgentMerge(store: LibraryStore, agent: Agent): Promise<void> {
+  const loader = new Loader(store, undefined, [agent]);
+  const gone: string[] = [];
+  for (const ref of [...agent.skills, ...agent.tools]) {
+    let found: unknown;
+    if (ref.kind === 'tool') found = await loader.load(ref);
+    else {
+      found = await store.get('skill', ref.id, ref.version).catch((err: unknown) => {
+        if (err instanceof NotFoundError) return localOf(agent).localCopies[refKey(ref)] ?? null;
+        throw err;
+      });
+    }
+    if (!found) {
+      const placeholder = loader.deletedRef(ref);
+      gone.push(
+        `${ref.kind === 'skill' ? 'skill' : 'tool preset'} ${placeholder ? `“${placeholder.name}”` : ref.id} (${ref.version})`,
+      );
+    }
+  }
+  if (gone.length > 0) {
+    throw new BadRequestError(
+      `Can’t merge: ${agent.name} uses ${gone.join(', ')}, which no longer ${gone.length === 1 ? 'exists' : 'exist'}. Remove ${gone.length === 1 ? 'it' : 'them'} first.`,
     );
   }
 }

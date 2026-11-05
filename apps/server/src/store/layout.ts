@@ -89,17 +89,20 @@ function graphLayout<K extends 'pattern' | 'template'>(dir: string, file: string
     root: (id) => `${dir}/${id}`,
     idFromChild: (child) => child,
     serialize: (entity) => {
-      const { id, name, description, workflow, layout } = entity;
-      // Patterns also store their repeat groups (after the graph they refer to).
+      const { id, name, description, workflow, layout, localCopies, deletedRefs } = entity;
+      // Patterns also store their repeat groups (after the graph they refer to). Local copies
+      // of deleted entities come last, and only when there are any.
       const repeat = 'repeat' in entity ? { repeat: entity.repeat } : {};
       return {
-        [sem(id)]: toYaml({ name, description, ...workflow, ...repeat }),
+        [sem(id)]: toYaml({ name, description, ...workflow, ...repeat, localCopies, deletedRefs }),
         [lay(id)]: toJson(layout),
       };
     },
     files: (id) => [sem(id), lay(id)],
     deserialize: (id, files) => {
-      const { name, description, nodes, edges, repeat } = fromYaml(files[sem(id)]);
+      const { name, description, nodes, edges, repeat, localCopies, deletedRefs } = fromYaml(
+        files[sem(id)],
+      );
       return {
         id,
         name,
@@ -107,6 +110,8 @@ function graphLayout<K extends 'pattern' | 'template'>(dir: string, file: string
         workflow: { nodes, edges },
         layout: fromJson(files[lay(id)]) ?? {},
         ...(repeat === undefined ? {} : { repeat }),
+        ...(localCopies === undefined ? {} : { localCopies }),
+        ...(deletedRefs === undefined ? {} : { deletedRefs }),
       };
     },
   };

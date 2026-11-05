@@ -27,7 +27,7 @@ export interface CascadeEntity {
   branch?: string;
   /** Current main version. */
   version: string | null;
-  /** The main version accepting creates (not for roots and forks). */
+  /** The main version accepting one of its cases creates (not for forks). */
   next?: string;
   /** Whether it has an unmerged draft (the update is applied to the draft too). */
   hasDraft: boolean;
