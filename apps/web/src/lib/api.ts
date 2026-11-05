@@ -153,16 +153,16 @@ export const api = {
     }),
 
   /** Who pins older versions of the roots, transitively (PLAN.md 8.2). */
-  cascadePreview: (roots: CascadeRoot[]) =>
+  cascadePreview: (roots: CascadeRoot[], exclude: CascadeRoot[] = []) =>
     apiFetch<CascadePreview>('/cascade/preview', {
       method: 'POST',
-      body: JSON.stringify({ roots }),
+      body: JSON.stringify({ roots, exclude }),
     }),
 
-  cascadeApply: (roots: CascadeRoot[], accept: string[]) =>
+  cascadeApply: (roots: CascadeRoot[], accept: string[], exclude: CascadeRoot[] = []) =>
     apiFetch<CascadeApplyResponse>('/cascade/apply', {
       method: 'POST',
-      body: JSON.stringify({ roots, accept }),
+      body: JSON.stringify({ roots, accept, exclude }),
     }),
 
   /** Settings → Restore defaults: add back deleted built-in patterns. */

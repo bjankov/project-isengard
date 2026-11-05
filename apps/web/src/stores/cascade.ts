@@ -9,6 +9,8 @@ interface CascadeRequest {
   /** Distinguishes requests, so reopening loads a fresh preview. */
   seq: number;
   roots: CascadeRoot[];
+  /** Left out as referrers (see `CascadePreviewRequest.exclude`). */
+  exclude?: CascadeRoot[];
   /** Why the dialog opened, e.g. "Skill “x” is now v2." */
   intro: string;
 }
@@ -37,12 +39,16 @@ export const useCascade = create<CascadeStore>((set) => ({
  * After a new main version (merge, promotion, deletion): open the cascade preview when anything
  * pins an older version. Quietly does nothing otherwise, or when the preview can't be loaded.
  */
-export async function offerCascade(roots: CascadeRoot[], intro: string): Promise<void> {
+export async function offerCascade(
+  roots: CascadeRoot[],
+  intro: string,
+  exclude: CascadeRoot[] = [],
+): Promise<void> {
   const pinnable = roots.filter((r) => PINNABLE.has(r.kind));
   if (pinnable.length === 0) return;
   try {
-    const preview = await api.cascadePreview(pinnable);
-    if (preview.cases.length > 0) useCascade.getState().open({ roots: pinnable, intro });
+    const preview = await api.cascadePreview(pinnable, exclude);
+    if (preview.cases.length > 0) useCascade.getState().open({ roots: pinnable, intro, exclude });
   } catch {
     // The editor header still offers "Update users…" later.
   }

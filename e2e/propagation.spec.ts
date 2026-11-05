@@ -195,6 +195,7 @@ test('a skill change cascades to two agents and three projects, as chosen', asyn
 test('deleting a used agent keeps a local copy in the project', async ({ page }) => {
   const agent = await createAgent(page, 'Doomed Agent', []);
   const project = await createProject(page, 'Keeps Copy', [{ node: 'doomed', agent }]);
+  const other = await createProject(page, 'Gets Pasted', []);
 
   await page.goto(`/agents/${agent}`);
   await header(page).getByRole('button', { name: 'Delete' }).click();
@@ -218,6 +219,26 @@ test('deleting a used agent keeps a local copy in the project', async ({ page })
   await shot(page, '65-local-copy');
   const p = await get<{ localCopies: Record<string, unknown> }>(page, `/api/projects/${project}`);
   expect(Object.keys(p.localCopies)).toEqual([`agent/${agent}@v1`]);
+
+  // Copy the node into another project: its local copy comes along.
+  await node.click();
+  await page.keyboard.press(`${mod}+c`);
+  await page.getByRole('link', { name: 'Projects', exact: true }).click();
+  await page.getByRole('link', { name: /Gets Pasted/ }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${other}$`));
+  await page.locator('.react-flow__pane').click();
+  await page.keyboard.press(`${mod}+v`);
+  const pasted = page.locator('.react-flow__node[data-id^="agent"]');
+  await expect(pasted).toContainText('Doomed Agent');
+  await expect(pasted).toContainText('local copy');
+  const saved = page.waitForResponse((r) => r.request().method() === 'PUT' && r.ok());
+  await page.keyboard.press(`${mod}+s`);
+  await saved;
+  const draft = await get<{ localCopies: Record<string, unknown> }>(
+    page,
+    `/api/projects/${other}?ref=draft`,
+  );
+  expect(Object.keys(draft.localCopies)).toEqual([`agent/${agent}@v1`]);
 });
 
 test('templates open on the canvas', async ({ page }) => {

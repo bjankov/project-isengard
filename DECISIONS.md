@@ -445,3 +445,8 @@ Format: date, milestone, decision, reason.
   - deleting with a local copy
   - templates on the canvas
   - Restore defaults
+
+### M6 review answers (2026-11-05, user decisions)
+- **The canvas clipboard carries local copies.** Copying keeps the local copies and placeholders the copied nodes reach (via `pruneLocal`). Pasting adds them to the target workflow, and copies already there win: the same key always holds the same pinned version.
+- **The container a fork is promoted from is left out of the cascade** (`exclude` on `POST /api/cascade/preview` and `/apply`). Promoting saves its draft, which already pins the new version, and its next merge publishes that. Offering it a separate new `main` version as well was confusing. Other entities pinning the promoted fork (e.g. old templates) are still listed.
+- **The flaky unhandled error in `pnpm test`** is noted in PROGRESS.md, to hunt down later. It was captured as an EPIPE on a git child's stdin (`git.ts:180`); the details and a probable fix are in the note.

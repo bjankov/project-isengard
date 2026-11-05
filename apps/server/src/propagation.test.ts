@@ -265,6 +265,13 @@ describe('cascade', () => {
     const pinsFork = result.cases.find((c) => c.referrer === `project/${p1}`);
     expect(pinsFork).toMatchObject({ fork: 'pins-fork', from: branch, to: 'v2' });
     expect(defaultAccepted(result).has(pinsFork?.id ?? '')).toBe(false);
+    // Left out entirely when the project is the one the fork is promoted from.
+    const excluding = await ok<CascadePreview>('POST', '/api/cascade/preview', {
+      roots: [{ kind: 'skill', id: skill }],
+      exclude: [{ kind: 'project', id: p1 }],
+    });
+    expect(excluding.cases.some((c) => c.referrer === `project/${p1}`)).toBe(false);
+    expect(excluding.cases.some((c) => c.fork === 'in-fork')).toBe(true);
 
     await ok('POST', '/api/cascade/apply', {
       roots: [{ kind: 'skill', id: skill }],

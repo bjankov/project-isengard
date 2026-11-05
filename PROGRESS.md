@@ -330,6 +330,7 @@ Built:
 - **Agents can't be merged while they pin a deleted skill or tool** (the M2 open issue).
 - **Tests:**
   - 182 unit/API tests (11 new server tests, 11 new schema tests)
+  - copy and paste carries local copies; the project a fork is promoted from is left out of the cascade (follow-up)
   - 24 browser tests (4 new, in `e2e/propagation.spec.ts`)
 
 How to try it:
@@ -350,8 +351,12 @@ Deviations from PLAN.md:
 - **A placeholder keeps the reference in place** and marks it deleted, instead of removing it (PLAN.md 8.4 says "the reference is removed"). The effect is the same (it resolves to nothing and blocks merging), but nodes and their edges stay, and the editor can show the last known name. Agreed at planning as part of the local-copy design.
 - **Additions:** update badges in the agent editor; templates on the canvas (needed for PLAN.md 8.3, agreed at planning); a new "agents can't merge with missing skills or tools" rule.
 
-Open issues / questions:
-- **Copy and paste between projects drops local copies.** A pasted node that pins a deleted entity kept as a local copy shows it as missing in the target project. Carry the copies on the clipboard (M7), or leave it?
-- **Promoting a fork whose project already pinned the fork on `main`:** the cascade lists that project, because its `main` version pins a fork that no longer exists. That case is checked by default, so accepting gives the project a new `main` version, while the user expected only a draft save. Is that acceptable, or should the project being promoted from be left out of the cascade?
+Open issues / questions (answered by the user on 2026-11-05):
+- **Copy and paste between projects dropped local copies.** **Answer: the clipboard carries them.** Done: copied nodes take the local copies and placeholders they reach, and pasting adds them to the target workflow (covered by the browser test).
+- **Promoting a fork whose project already pinned it on `main`** made the cascade offer that project a new `main` version. That wasn't a second `main`: the project's one `main` version still pinned the deleted fork, while its draft already pinned the promoted version. **Answer: too much of a headache.** Done: the project, template or pattern the fork is promoted from is left out of the cascade. Its draft already pins the new version, and its next merge publishes it.
 - **The cascade can only offer what is on `main`.** A project draft that pins an old agent version, where the project's `main` doesn't, isn't listed; the canvas badge covers it when the project is opened. This follows the M2 rule that drafts don't count.
-- **One unhandled error was seen once in `pnpm test`** (attributed to `app.test.ts` after "404s on unknown kinds and ids"). Two full reruns and an isolated run didn't reproduce it, and all tests passed each time. Worth watching.
+- **Flaky test, to hunt down later (user decision):** `pnpm test` occasionally reports one unhandled error, attributed to whichever `app.test.ts` test ran last. Every test still passes. It was seen 3 times in about 8 runs.
+  - **Captured:** `Error: write EPIPE` at `apps/server/src/git.ts:180` (`child.stdin.end(opts.input ?? '')` in `LibraryGit.run`, from M2).
+  - **Likely cause:** `run` always writes to the child's stdin, even for git commands that don't read it (`read-tree`, `ls-files`, `write-tree`…). If git exits before Node writes, the write fails with EPIPE. `child.stdin` has no `'error'` listener, so the error becomes an uncaught exception.
+  - **Why it matters beyond tests:** in the running server, the same uncaught exception could crash the process.
+  - **Probable fix (not applied):** ignore errors on `child.stdin` (`child.stdin.on('error', () => {})`); git's exit code still reports real failures. Optionally, only pipe stdin when there is input.

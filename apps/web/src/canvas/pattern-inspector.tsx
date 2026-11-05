@@ -514,6 +514,7 @@ export function PatternInstanceFields({
                 branch={node.pattern.version}
                 name={libraryName ?? pattern?.name ?? node.pattern.id}
                 disabledReason={dirty ? 'Save first: promoting saves.' : undefined}
+                container={{ kind, id: entityId }}
                 onPromoted={(to) => pin(to.version, to.id, changeAndSave)}
               />
             </div>

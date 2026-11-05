@@ -9,7 +9,11 @@ import {
   createPatternNode,
   flattenWorkflow,
   patternPorts,
+  pruneLocal,
   repin,
+  withLocal,
+  type DeletedRef,
+  type LocalCopy,
   type PatternLookup,
   type Project,
   type WorkflowEdge,
@@ -99,7 +103,17 @@ const ID_PREFIX: Record<CanvasNodeType, string> = {
 };
 
 /** Copied nodes, kept for the session so they can be pasted into another project too. */
-let clipboard: (Subgraph & { overrides: Record<string, AgentOverride> }) | undefined;
+/**
+ * Copied nodes, for the session. Besides the edges among them and their overrides, it carries
+ * the local copies and placeholders of deleted entities they pin, so pasting them into another
+ * workflow keeps them working.
+ */
+let clipboard:
+  | (Subgraph & {
+      overrides: Record<string, AgentOverride>;
+      local: { localCopies?: Record<string, LocalCopy>; deletedRefs?: Record<string, DeletedRef> };
+    })
+  | undefined;
 
 const snap = (v: number) => Math.round(v / GRID) * GRID;
 
@@ -807,10 +821,20 @@ export function WorkflowEditor({
       const o = doc.overrides[id];
       if (o) overrides[id] = o;
     }
-    clipboard = { ...sub, overrides };
+    // Only the copies the copied nodes reach (and those the copies themselves pin).
+    const { localCopies, deletedRefs } = pruneLocal('template', {
+      id: 'clipboard-aaaaaa',
+      name: '',
+      description: '',
+      workflow: { nodes: sub.nodes, edges: [] },
+      layout: { nodes: {}, expanded: [] },
+      ...(doc.localCopies ? { localCopies: doc.localCopies } : {}),
+      ...(doc.deletedRefs ? { deletedRefs: doc.deletedRefs } : {}),
+    });
+    clipboard = { ...sub, overrides, local: { localCopies, deletedRefs } };
     pasteCount.current = 0;
     toast.success(`Copied ${sub.nodes.length} node${sub.nodes.length === 1 ? '' : 's'}`);
-  }, [selection.nodes, graph, doc.layout.nodes, doc.overrides]);
+  }, [selection.nodes, graph, doc.layout.nodes, doc.overrides, doc.localCopies, doc.deletedRefs]);
 
   const paste = useCallback(() => {
     if (!clipboard) return;
@@ -826,8 +850,11 @@ export function WorkflowEditor({
       const id = clone.idMap[old];
       if (id) overrides[id] = structuredClone(o);
     }
+    const { localCopies, deletedRefs } = clipboard.local;
     change((d) => ({
       ...d,
+      // Copies already here win; the same key always holds the same pinned version.
+      ...withLocal({ ...localCopies, ...d.localCopies }, { ...deletedRefs, ...d.deletedRefs }),
       overrides: { ...d.overrides, ...overrides },
       workflow: {
         nodes: [...d.workflow.nodes, ...clone.nodes],

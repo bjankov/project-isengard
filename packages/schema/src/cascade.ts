@@ -81,11 +81,17 @@ export interface CascadeRoot {
 /** Body of `POST /api/cascade/preview`. */
 export interface CascadePreviewRequest {
   roots: CascadeRoot[];
+  /**
+   * Entities left out as referrers, e.g. the project a fork was just promoted from: its draft
+   * already pins the new version, and its next merge publishes that.
+   */
+  exclude?: CascadeRoot[];
 }
 
 /** Body of `POST /api/cascade/apply`. */
 export interface CascadeApplyRequest {
   roots: CascadeRoot[];
+  exclude?: CascadeRoot[];
   /** Case ids to accept. Cases that don't apply (their target isn't updated) are refused. */
   accept: string[];
 }

@@ -53,7 +53,12 @@ interface Computed {
 /** Kinds whose forks (named branches) can pin other entities. */
 const FORK_KINDS: readonly EntityKind[] = ['agent', 'pattern'];
 
-async function compute(store: LibraryStore, roots: CascadeRoot[]): Promise<Computed> {
+async function compute(
+  store: LibraryStore,
+  roots: CascadeRoot[],
+  exclude: CascadeRoot[] = [],
+): Promise<Computed> {
+  const excluded = new Set(exclude.map((e) => entityKey(e.kind, e.id)));
   const versionMaps = new Map<EntityKind, Awaited<ReturnType<LibraryStore['versionMap']>>>();
   const versions = async (kind: EntityKind) => {
     let m = versionMaps.get(kind);
@@ -136,7 +141,8 @@ async function compute(store: LibraryStore, roots: CascadeRoot[]): Promise<Compu
     const referrers = new Map<string, { kind: EntityKind; id: string }>();
     for (const r of store.references(kind, id).incoming) {
       if (r.kind === kind && r.id === id) continue;
-      if (isReferrerKind(r.kind)) referrers.set(entityKey(r.kind, r.id), r);
+      const key = entityKey(r.kind, r.id);
+      if (isReferrerKind(r.kind) && !excluded.has(key)) referrers.set(key, r);
     }
     for (const r of referrers.values()) {
       const key = entityKey(r.kind, r.id);
@@ -273,8 +279,9 @@ async function newErrors(
 export async function previewCascade(
   store: LibraryStore,
   roots: CascadeRoot[],
+  exclude: CascadeRoot[] = [],
 ): Promise<CascadePreview> {
-  const computed = await compute(store, roots);
+  const computed = await compute(store, roots, exclude);
   const enabled = enabledCases(computed.preview, defaultAccepted(computed.preview));
   const problems = await newErrors(store, computed, project(computed, enabled));
   for (const e of computed.preview.entities) e.problems = problems.get(e.key) ?? [];
@@ -297,8 +304,9 @@ export async function applyCascade(
   store: LibraryStore,
   roots: CascadeRoot[],
   accept: string[],
+  exclude: CascadeRoot[] = [],
 ): Promise<CascadeApplyResponse> {
-  const computed = await compute(store, roots);
+  const computed = await compute(store, roots, exclude);
   const known = new Set(computed.preview.cases.map((c) => c.id));
   const unknown = accept.filter((id) => !known.has(id));
   if (unknown.length > 0) {

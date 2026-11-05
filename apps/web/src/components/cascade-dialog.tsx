@@ -65,7 +65,7 @@ export function CascadeDialog() {
   const request = useCascade((s) => s.request);
   const close = useCascade((s) => s.close);
   const fetched = useFetched(request ? String(request.seq) : undefined, () =>
-    api.cascadePreview(request?.roots ?? []),
+    api.cascadePreview(request?.roots ?? [], request?.exclude),
   );
   const preview = fetched.data;
   const error = fetched.error;
@@ -95,7 +95,7 @@ export function CascadeDialog() {
     if (!request || !preview) return;
     setApplying(true);
     try {
-      const res = await api.cascadeApply(request.roots, [...enabled]);
+      const res = await api.cascadeApply(request.roots, [...enabled], request.exclude);
       const kinds = new Set(res.updated.map((u) => u.kind));
       const { load } = useLibrary.getState();
       await Promise.all([...kinds].map((k) => load(k)));

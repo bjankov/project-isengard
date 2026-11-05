@@ -158,7 +158,13 @@ export async function buildApp(
     if (!Array.isArray(roots) || roots.length === 0) {
       throw new BadRequestError('"roots" must list at least one entity');
     }
-    return roots.map((r: unknown) => {
+    return parseEntityList(roots);
+  }
+
+  function parseEntityList(list: unknown): CascadeRoot[] {
+    if (list === undefined) return [];
+    if (!Array.isArray(list)) throw new BadRequestError('expected a list of entities');
+    return list.map((r: unknown) => {
       const { kind, id } = (r ?? {}) as { kind?: unknown; id?: unknown };
       if (typeof kind !== 'string' || typeof id !== 'string' || !kindFromPlural(`${kind}s`)) {
         throw new BadRequestError('each root needs a "kind" and an "id"');
@@ -169,7 +175,7 @@ export async function buildApp(
 
   /** Cascade preview (PLAN.md 8.2): who pins an older version of the roots, transitively. */
   app.post<{ Body: CascadePreviewRequest | undefined }>('/api/cascade/preview', async (req) =>
-    previewCascade(store, parseRoots(req.body)),
+    previewCascade(store, parseRoots(req.body), parseEntityList(req.body?.exclude)),
   );
 
   app.post<{ Body: CascadeApplyRequest | undefined }>('/api/cascade/apply', async (req) => {
@@ -177,7 +183,7 @@ export async function buildApp(
     if (!Array.isArray(accept) || !accept.every((a) => typeof a === 'string')) {
       throw new BadRequestError('"accept" must be a list of case ids');
     }
-    return applyCascade(store, parseRoots(req.body), accept);
+    return applyCascade(store, parseRoots(req.body), accept, parseEntityList(req.body?.exclude));
   });
 
   app.post<{ Body: { path?: unknown } | undefined }>(

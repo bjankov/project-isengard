@@ -283,7 +283,8 @@ export function AgentInspector({
               id={ref.id}
               branch={ref.version}
               name={agents?.find((a) => a.id === ref.id)?.name ?? agent?.name ?? ref.id}
-              disabledReason={dirty ? 'Save the project first: promoting saves it.' : undefined}
+              disabledReason={dirty ? `Save the ${kind} first: promoting saves it.` : undefined}
+              container={{ kind, id: projectId }}
               onPromoted={(to) => pin(to.version, to.id, changeAndSave)}
             />
           </div>
