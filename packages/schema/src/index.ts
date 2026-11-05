@@ -15,3 +15,5 @@ export * from './glob.js';
 export * from './entities.js';
 export * from './api.js';
 export * from './versioning.js';
+export * from './references.js';
+export * from './cascade.js';

@@ -71,6 +71,29 @@ export type PatternRef = z.infer<typeof PatternRef>;
 export const TemplateRef = refOf('template');
 export type TemplateRef = z.infer<typeof TemplateRef>;
 
+/**
+ * Stable string key of a pinned reference, `<kind>/<id>@<version>`, e.g.
+ * `skill/write-tests-k3x9qa@v2`. Keys local copies and deleted placeholders.
+ */
+export const RefKey = z
+  .string()
+  .regex(
+    /^(skill|tool|agent|pattern|template|project)\/[a-z0-9-]+@[A-Za-z0-9._-]+$/,
+    'expected "<kind>/<id>@<version>"',
+  );
+export type RefKey = z.infer<typeof RefKey>;
+
+export function refKey(ref: Pick<Ref, 'kind' | 'id' | 'version'>): RefKey {
+  return `${ref.kind}/${ref.id}@${ref.version}`;
+}
+
+export function parseRefKey(key: string): Ref | undefined {
+  const m = /^([a-z]+)\/([a-z0-9-]+)@(.+)$/.exec(key);
+  if (!m) return undefined;
+  const parsed = Ref.safeParse({ kind: m[1], id: m[2], version: m[3] });
+  return parsed.success ? parsed.data : undefined;
+}
+
 /** Common display fields of every library entity. */
 export const EntityMeta = z.object({
   id: EntityId,
