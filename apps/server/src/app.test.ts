@@ -1,5 +1,13 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -64,7 +72,8 @@ function listAll(): Promise<Record<EntityKind, EntityListItem[]>> {
 let workspace: string;
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'app-test-'));
+  // Resolve symlinks (macOS: /var -> /private/var) so paths match what git reports.
+  home = realpathSync(mkdtempSync(join(tmpdir(), 'app-test-')));
   config = loadConfig({ APP_HOME: home });
   workspace = join(home, 'workspace');
   mkdirSync(workspace);

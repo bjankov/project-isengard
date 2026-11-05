@@ -281,3 +281,9 @@ Format: date, milestone, decision, reason.
 - Unclear glob coverage stays an **error**, not a "can't confirm" warning. To revisit later.
 - Moving toasts away from the problems bar is polish for M7.
 - A context preview for evaluator agents in decisions is deferred (not scheduled yet).
+
+## 2026-11-05 (M5)
+
+### Before the milestone
+- **better-sqlite3 is no longer in `onlyBuiltDependencies`.** Version 13 ships prebuilt binaries for every platform and has no install script. Listing it made pnpm run an implicit `node-gyp rebuild` (the package contains `binding.gyp`), which fails when `node-gyp` isn't installed. pnpm now prints an "Ignored build scripts" warning on install; it is harmless, and `pnpm approve-builds` must not be used for it.
+- **Server tests resolve their temp folder with `realpathSync`.** On macOS `/var` links to `/private/var`, and git reports repo roots in resolved form, so the `inside-repo` test failed there (development was on Fedora until now). The app's behaviour is unchanged: the "Use <repo root>" suggestion shows the resolved path when the typed path goes through a symlink. User decision: fix only the test for now; the display issue is in `V2_BACKLOG.md` to revisit before release.
