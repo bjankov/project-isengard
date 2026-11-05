@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { api } from '@/lib/api';
 import { useLibrary } from '@/stores/library';
-import type { ProjectDoc } from './doc';
+import type { WorkflowDoc } from './doc';
 
 /** Copy the project's workflow and layout into a new workflow template. */
 export function SaveAsTemplateDialog({
@@ -24,7 +24,7 @@ export function SaveAsTemplateDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  doc: ProjectDoc;
+  doc: WorkflowDoc;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -35,7 +35,7 @@ export function SaveAsTemplateDialog({
   );
 }
 
-function TemplateForm({ doc, onDone }: { doc: ProjectDoc; onDone: () => void }) {
+function TemplateForm({ doc, onDone }: { doc: WorkflowDoc; onDone: () => void }) {
   const upsert = useLibrary((s) => s.upsert);
   const [name, setName] = useState(`${doc.name} template`);
   const [description, setDescription] = useState(doc.description);

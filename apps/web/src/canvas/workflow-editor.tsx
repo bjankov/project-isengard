@@ -10,7 +10,6 @@ import {
   type AgentOverride,
   type CanvasNodeType,
   type EdgeEndpoint,
-  type EntityInput,
   type NodeNeeds,
   type Subgraph,
   type WorkflowGraph,
@@ -44,11 +43,19 @@ import { useEntities } from '@/stores/library';
 import { usePinnedStore } from '@/stores/pinned';
 import { useSettings } from '@/stores/settings';
 import { CanvasContext, type CanvasContextValue } from './context';
-import { removeItems, nodeTitle, type Change, type ProjectDoc } from './doc';
+import {
+  fromDoc,
+  nodeTitle,
+  removeItems,
+  toDoc,
+  type CanvasKind,
+  type Change,
+  type WorkflowDoc,
+} from './doc';
 import { edgeTypes, type FlowEdge } from './edges';
 import { Inspector, type Selection } from './inspector';
 import { flowNodeType, nodeTypes, type FlowNode } from './nodes';
-import { NEEDS_PICK, NODE_DRAG_TYPE, Palette, QuickAdd } from './palette';
+import { NODE_DRAG_TYPE, Palette, QuickAdd, needsPick } from './palette';
 import { ContextPreview } from './context-preview';
 import { ProblemsPanel } from './problems-panel';
 import { SaveAsTemplateDialog } from './save-as-template';
@@ -89,27 +96,39 @@ function dialogOpen(): boolean {
 
 const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
 
-export function ProjectEditor({ source }: { source: EditorSourceReady<'project'> }) {
-  const editor = useEntityEditor('project', source);
+/**
+ * The workflow canvas, for a project's workflow or a pattern's graph (PLAN.md 7.7: patterns
+ * are edited on the same canvas). Patterns use slots instead of agents and have repeat groups;
+ * projects have overrides, a workspace, templates and the context preview.
+ */
+export function WorkflowEditor({
+  kind,
+  source,
+}: {
+  kind: CanvasKind;
+  source: EditorSourceReady<CanvasKind>;
+}) {
+  const editor = useEntityEditor(kind, source);
   const settings = useSettings();
   const tools = useEntities('tool');
   const flow = useReactFlow();
   const wrapper = useRef<HTMLDivElement>(null);
-  const projectId = source.saved?.id ?? '';
+  const entityId = source.saved?.id ?? '';
+  const isPattern = kind === 'pattern';
 
-  const doc = editor.draft as unknown as ProjectDoc;
+  const doc = useMemo(() => toDoc(kind, editor.draft), [kind, editor.draft]);
   const { update } = editor;
   const restore = useCallback(
-    (next: ProjectDoc) => update(() => next as unknown as EntityInput<'project'>),
-    [update],
+    (next: WorkflowDoc) => update(() => fromDoc(kind, next)),
+    [kind, update],
   );
   const history = useUndoHistory(doc, restore);
   const change: Change = useCallback(
     (fn, key) => {
       history.record(doc, key);
-      update((d) => fn(d as unknown as ProjectDoc) as unknown as EntityInput<'project'>);
+      update((d) => fromDoc(kind, fn(toDoc(kind, d))));
     },
-    [history, doc, update],
+    [history, doc, update, kind],
   );
 
   const [selection, setSelection] = useState<Selection>({ nodes: [], edges: [] });
@@ -128,7 +147,12 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
 
   const graph = doc.workflow as WorkflowGraph;
   const loops = useMemo(() => analyzeLoops(graph), [graph]);
-  const check = useWorkflowCheck(graph, loops);
+  const check = useWorkflowCheck(graph, {
+    kind,
+    repeat: doc.repeat,
+    ...(isPattern && entityId ? { selfId: entityId } : {}),
+  });
+  const patterns = check.resolver.pattern;
 
   // ---- Problems ----
 
@@ -325,15 +349,15 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
   const isValidConnection = useCallback(
     (c: Connection | FlowEdge) => {
       const { source, target } = endpoints(c);
-      return canConnect(graph, source, target).ok;
+      return canConnect(graph, source, target, patterns).ok;
     },
-    [graph],
+    [graph, patterns],
   );
 
   const onConnect = useCallback(
     (c: Connection) => {
       const { source, target } = endpoints(c);
-      const check = canConnect(graph, source, target);
+      const check = canConnect(graph, source, target, patterns);
       if (!check.ok) {
         toast.error(check.reason);
         return;
@@ -348,11 +372,12 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
           ),
           source,
           target,
+          patterns,
         );
         return { ...d, workflow: { ...g, edges: [...g.edges, edge] } };
       });
     },
-    [graph, change],
+    [graph, change, patterns],
   );
 
   const onConnectEnd = useCallback(
@@ -369,10 +394,12 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
       const fromIsSource = state.fromHandle?.type !== 'target';
       const a = { node: state.fromNode.id, port: state.fromHandle?.id ?? undefined };
       const b = { node: toId, port: state.toHandle?.id ?? undefined };
-      const check = fromIsSource ? canConnect(graph, a, b) : canConnect(graph, b, a);
+      const check = fromIsSource
+        ? canConnect(graph, a, b, patterns)
+        : canConnect(graph, b, a, patterns);
       if (!check.ok) toast.error(check.reason);
     },
-    [graph],
+    [graph, patterns],
   );
 
   // ---- Adding nodes ----
@@ -486,11 +513,13 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
 
   const pick = useCallback(
     (type: CanvasNodeType, at?: { x: number; y: number }) => {
-      const needs = NEEDS_PICK[type];
+      const needs = needsPick(kind, type);
       if (needs) setQuickAdd({ only: needs, at });
+      // In a pattern, agents are slots: a new one starts as a role to fill in.
+      else if (type === 'agent') addNode(type, { slot: { role: 'Agent' } }, at);
       else addNode(type, undefined, at);
     },
-    [addNode],
+    [addNode, kind],
   );
 
   const onDrop = (e: React.DragEvent) => {
@@ -575,7 +604,7 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
       } else if (mod && key === 'a') {
         e.preventDefault();
         setSelection({ nodes: graph.nodes.map((n) => n.id), edges: [] });
-      } else if (!mod && !e.altKey && key === 'p' && after?.type === 'agent') {
+      } else if (!mod && !e.altKey && key === 'p' && after?.type === 'agent' && !isPattern) {
         e.preventDefault();
         setPreview(after.id);
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -585,11 +614,20 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [history, copy, paste, deleteSelection, graph.nodes, after]);
+  }, [history, copy, paste, deleteSelection, graph.nodes, after, isPattern]);
 
   const context: CanvasContextValue = useMemo(
-    () => ({ graph, overrides: doc.overrides, loops, check, settings, tools }),
-    [graph, doc.overrides, loops, check, settings, tools],
+    () => ({
+      kind,
+      graph,
+      overrides: doc.overrides,
+      repeat: doc.repeat,
+      loops,
+      check,
+      settings,
+      tools,
+    }),
+    [kind, graph, doc.overrides, doc.repeat, loops, check, settings, tools],
   );
 
   const shortcut = (k: string) => `${isMac ? '⌘' : 'Ctrl+'}${k}`;
@@ -600,17 +638,17 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
       ...editor.versioning,
       mergeBlocked:
         check.errors > 0
-          ? `Fix the workflow’s ${check.errors === 1 ? 'error' : `${check.errors} errors`} first (see Problems under the canvas). A version on main must be complete.`
+          ? `Fix the ${isPattern ? 'pattern' : 'workflow'}’s ${check.errors === 1 ? 'error' : `${check.errors} errors`} first (see Problems under the canvas). A version on main must be complete.`
           : undefined,
     }),
-    [editor.versioning, check.errors],
+    [editor.versioning, check.errors, isPattern],
   );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <UnsavedChangesGuard dirty={editor.dirty} />
       <EditorHeader
-        eyebrow="Project"
+        eyebrow={isPattern ? 'Pattern' : 'Project'}
         title={editor.saved?.name ?? doc.name}
         dirty={editor.dirty}
         saving={editor.saving}
@@ -649,15 +687,17 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
                 <TooltipContent>Redo ({isMac ? '⇧⌘Z' : 'Ctrl+Shift+Z'})</TooltipContent>
               </Tooltip>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => setTemplateOpen(true)}>
-              <BookmarkPlus />
-              Save as template
-            </Button>
+            {!isPattern && (
+              <Button variant="ghost" size="sm" onClick={() => setTemplateOpen(true)}>
+                <BookmarkPlus />
+                Save as template
+              </Button>
+            )}
           </>
         }
       />
       <div className="flex min-h-0 flex-1">
-        <Palette onPick={(type) => pick(type)} />
+        <Palette kind={kind} onPick={(type) => pick(type)} />
         <div className="flex min-w-0 flex-1 flex-col">
           <div
             ref={wrapper}
@@ -714,7 +754,8 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
           />
         </div>
         <Inspector
-          projectId={projectId}
+          kind={kind}
+          entityId={entityId}
           doc={doc}
           change={change}
           selection={selection}
@@ -730,18 +771,23 @@ export function ProjectEditor({ source }: { source: EditorSourceReady<'project'>
       <QuickAdd
         open={quickAdd !== null}
         onOpenChange={(open) => !open && setQuickAdd(null)}
+        kind={kind}
         only={quickAdd?.only}
         afterLabel={!quickAdd?.at && after ? nodeTitle(after, agentNames) : undefined}
         onAdd={(type, needs) => addNode(type, needs, quickAdd?.at)}
       />
-      <SaveAsTemplateDialog open={templateOpen} onOpenChange={setTemplateOpen} doc={doc} />
-      <ContextPreview
-        nodeId={preview}
-        onOpenChange={(open) => !open && setPreview(null)}
-        doc={doc}
-        loops={loops}
-        check={check}
-      />
+      {!isPattern && (
+        <>
+          <SaveAsTemplateDialog open={templateOpen} onOpenChange={setTemplateOpen} doc={doc} />
+          <ContextPreview
+            nodeId={preview}
+            onOpenChange={(open) => !open && setPreview(null)}
+            doc={doc}
+            loops={loops}
+            check={check}
+          />
+        </>
+      )}
     </div>
   );
 }

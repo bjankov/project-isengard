@@ -31,7 +31,20 @@ import { WorkspaceField } from '@/components/workspace-field';
 import { errorAt, type FieldErrors } from '@/lib/validation';
 import { useEntities, useVersions } from '@/stores/library';
 import { AgentInspector } from './agent-inspector';
-import { nodeTitle, updateEdge, updateNode, type Change, type ProjectDoc } from './doc';
+import {
+  nodeTitle,
+  updateEdge,
+  updateNode,
+  type CanvasKind,
+  type Change,
+  type WorkflowDoc,
+} from './doc';
+import {
+  PatternInstanceSummary,
+  PatternPanelFields,
+  RepeatField,
+  SlotFields,
+} from './pattern-inspector';
 import { EnumSelect, OptionalNumber, StringList } from './fields';
 import { EvaluatorCode } from './evaluator-code';
 import { NODE_META } from './node-meta';
@@ -44,8 +57,10 @@ export interface Selection {
 }
 
 interface InspectorProps {
-  projectId: string;
-  doc: ProjectDoc;
+  kind: CanvasKind;
+  /** Id of the project or pattern being edited ('' while new). */
+  entityId: string;
+  doc: WorkflowDoc;
   change: Change;
   selection: Selection;
   settings: Settings | undefined;
@@ -171,6 +186,14 @@ export function Inspector(props: InspectorProps) {
           subtitle="Drag to move them together, or delete them."
           onDelete={props.onDeleteSelection}
         />
+      ) : props.kind === 'pattern' ? (
+        <>
+          <PanelHeader
+            title="Pattern"
+            subtitle="Select a node or edge to configure it. Inputs and Outputs are its ports."
+          />
+          <PatternPanelFields doc={doc} change={props.change} errors={props.errors} />
+        </>
       ) : (
         <ProjectPanel {...props} />
       )}
@@ -296,7 +319,7 @@ function ProjectPanel({ doc, change, errors, onWorkspaceCheck }: InspectorProps)
 // ---- Nodes ----
 
 function NodePanel(props: InspectorProps & { node: WorkflowNode }) {
-  const { node, doc, change, errors, projectId, settings } = props;
+  const { node, doc, change, errors, entityId, settings, kind } = props;
   const meta = NODE_META[node.type];
   const Icon = meta.icon;
   const index = doc.workflow.nodes.indexOf(node);
@@ -317,7 +340,13 @@ function NodePanel(props: InspectorProps & { node: WorkflowNode }) {
           </span>
         }
         title={nodeTitle(node, agentNames)}
-        subtitle={NODE_TYPE_INFO[node.type].label}
+        subtitle={
+          node.type === 'agent' && node.binding.kind === 'slot'
+            ? 'Slot'
+            : kind === 'pattern' && (node.type === 'input' || node.type === 'output')
+              ? `${NODE_TYPE_INFO[node.type].label} port`
+              : NODE_TYPE_INFO[node.type].label
+        }
         onDelete={props.onDeleteSelection}
       />
       <div className="flex-1 space-y-4 overflow-y-auto p-4" key={node.id}>
@@ -413,9 +442,22 @@ function NodePanel(props: InspectorProps & { node: WorkflowNode }) {
           </>
         )}
 
-        {node.type === 'agent' && (
+        {kind === 'pattern' && <RepeatField node={node} doc={doc} change={change} />}
+
+        {node.type === 'agent' && node.binding.kind === 'slot' && (
+          <SlotFields
+            slot={node.binding}
+            onChange={(binding, key) =>
+              set((n) => (n.type === 'agent' ? { ...n, binding } : n), `slot:${key}`)
+            }
+          />
+        )}
+
+        {node.type === 'pattern' && <PatternInstanceSummary node={node} />}
+
+        {node.type === 'agent' && node.binding.kind === 'agent' && (
           <AgentInspector
-            projectId={projectId}
+            projectId={entityId}
             nodeId={node.id}
             doc={doc}
             change={change}
@@ -668,6 +710,7 @@ function DecisionFields({
   change,
   set,
   err,
+  ...props
 }: InspectorProps & {
   node: Extract<WorkflowNode, { type: 'decision' }>;
   set: SetNode;
@@ -692,6 +735,7 @@ function DecisionFields({
   const setExit = (id: string, patch: Partial<DecisionExit>, key: string) =>
     setExits((xs) => xs.map((y) => (y.id === id ? { ...y, ...patch } : y)), `exit:${id}:${key}`);
   const firstAgent = agents?.[0];
+  const inPattern = props.kind === 'pattern';
 
   return (
     <>
@@ -703,8 +747,8 @@ function DecisionFields({
             { value: 'deterministic', label: 'Deterministic (code)' },
             {
               value: 'agent',
-              label: 'Agent',
-              description: firstAgent ? undefined : '(no agents yet)',
+              label: inPattern ? 'Agent (a slot)' : 'Agent',
+              description: firstAgent || inPattern ? undefined : '(no agents yet)',
             },
             { value: 'human', label: 'Human' },
           ]}
@@ -713,6 +757,12 @@ function DecisionFields({
             if (type === 'deterministic') switchEvaluator({ type, language: 'python', code: '' });
             else if (type === 'human')
               switchEvaluator({ type, instructions: '', allowFeedback: true });
+            else if (inPattern)
+              switchEvaluator({
+                type,
+                criteria: '',
+                agent: { kind: 'slot', role: 'Router', description: '' },
+              });
             else if (firstAgent)
               switchEvaluator({
                 type,
@@ -732,6 +782,28 @@ function DecisionFields({
           onChange={(next, key) => setEvaluator(next, key)}
           error={err('evaluator.code')}
         />
+      )}
+      {ev.type === 'agent' && ev.agent.kind === 'slot' && (
+        <>
+          <SlotFields
+            slot={ev.agent}
+            idPrefix="eval-slot"
+            roleLabel="Evaluating role"
+            onChange={(agent, key) => setEvaluator({ ...ev, agent }, `evalSlot:${key}`)}
+          />
+          <Field
+            label="Criteria"
+            htmlFor="node-criteria"
+            hint="What the agent judges. It answers with one of the exit labels below."
+          >
+            <Textarea
+              id="node-criteria"
+              value={ev.criteria}
+              rows={4}
+              onChange={(e) => setEvaluator({ ...ev, criteria: e.target.value }, 'criteria')}
+            />
+          </Field>
+        </>
       )}
       {ev.type === 'agent' && ev.agent.kind === 'agent' && (
         <>

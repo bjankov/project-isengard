@@ -1,17 +1,46 @@
-import type { Project, WorkflowEdge, WorkflowNode } from '@app/schema';
+import type {
+  EntityInput,
+  Pattern,
+  Project,
+  RepeatGroup,
+  WorkflowEdge,
+  WorkflowNode,
+} from '@app/schema';
 import { omit } from '@/lib/same';
 
-/** The part of a project the canvas edits (everything but the id). */
-export type ProjectDoc = Omit<Project, 'id'>;
+/** What a canvas edits: a project's workflow, or a pattern's. */
+export type CanvasKind = 'project' | 'pattern';
 
-/** Apply a change to the project; `key` coalesces repeated changes into one undo step. */
-export type Change = (fn: (doc: ProjectDoc) => ProjectDoc, key?: string) => void;
+/**
+ * The document a canvas edits (everything but the id), the same shape for both kinds so the
+ * canvas code is shared. A pattern has no overrides or workspace (`{}` and `''` here); a
+ * project has no repeat groups (`[]`). `toDoc` and `fromDoc` convert from and to the stored
+ * entity, so nothing extra is saved.
+ */
+export type WorkflowDoc = Omit<Project, 'id'> & { repeat: RepeatGroup[] };
+
+export function toDoc(kind: CanvasKind, entity: EntityInput<CanvasKind>): WorkflowDoc {
+  // Editor drafts start from parsed entities, so every defaulted field is present.
+  if (kind === 'project') return { ...(entity as unknown as Omit<Project, 'id'>), repeat: [] };
+  const p = entity as unknown as Omit<Pattern, 'id'>;
+  return { ...p, overrides: {}, workspacePath: '' };
+}
+
+export function fromDoc(kind: CanvasKind, doc: WorkflowDoc): EntityInput<CanvasKind> {
+  const { repeat, overrides, workspacePath, ...common } = doc;
+  return kind === 'project'
+    ? { ...common, overrides, workspacePath }
+    : ({ ...common, repeat } as EntityInput<'pattern'>);
+}
+
+/** Apply a change to the document; `key` coalesces repeated changes into one undo step. */
+export type Change = (fn: (doc: WorkflowDoc) => WorkflowDoc, key?: string) => void;
 
 export function updateNode(
-  doc: ProjectDoc,
+  doc: WorkflowDoc,
   id: string,
   fn: (n: WorkflowNode) => WorkflowNode,
-): ProjectDoc {
+): WorkflowDoc {
   return {
     ...doc,
     workflow: {
@@ -22,10 +51,10 @@ export function updateNode(
 }
 
 export function updateEdge(
-  doc: ProjectDoc,
+  doc: WorkflowDoc,
   id: string,
   fn: (e: WorkflowEdge) => WorkflowEdge,
-): ProjectDoc {
+): WorkflowDoc {
   return {
     ...doc,
     workflow: {
@@ -37,17 +66,25 @@ export function updateEdge(
 
 /** Remove nodes (with their edges, positions and overrides) and edges. */
 export function removeItems(
-  doc: ProjectDoc,
+  doc: WorkflowDoc,
   nodeIds: Iterable<string>,
   edgeIds: Iterable<string>,
-): ProjectDoc {
+): WorkflowDoc {
   const nodes = new Set(nodeIds);
   const edges = new Set(edgeIds);
   const positions = omit(doc.layout.nodes, ...nodes);
-  const overrides = omit(doc.overrides, ...nodes);
+  // Overrides of a removed instance's inner agents (`<node>/…`) go with it.
+  const overrides = Object.fromEntries(
+    Object.entries(doc.overrides).filter(([key]) => !nodes.has(key.split('/')[0] ?? key)),
+  );
+  // Removed nodes leave their repeat groups; empty groups are removed.
+  const repeat = doc.repeat
+    .map((g) => ({ ...g, nodes: g.nodes.filter((id) => !nodes.has(id)) }))
+    .filter((g) => g.nodes.length > 0);
   return {
     ...doc,
     overrides,
+    repeat,
     layout: { ...doc.layout, nodes: positions },
     workflow: {
       nodes: doc.workflow.nodes.filter((n) => !nodes.has(n.id)),

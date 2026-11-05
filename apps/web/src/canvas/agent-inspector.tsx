@@ -37,7 +37,7 @@ import { ApiError, api } from '@/lib/api';
 import { compact, omit } from '@/lib/same';
 import { usePinned } from '@/stores/pinned';
 import { useEntities, useVersions } from '@/stores/library';
-import { updateNode, type Change, type ProjectDoc } from './doc';
+import { updateNode, type Change, type WorkflowDoc } from './doc';
 import { OptionalNumber } from './fields';
 import { Kbd } from './kbd';
 
@@ -76,7 +76,7 @@ export function AgentInspector({
 }: {
   projectId: string;
   nodeId: string;
-  doc: ProjectDoc;
+  doc: WorkflowDoc;
   change: Change;
   settings: Settings | undefined;
   onPreview: () => void;

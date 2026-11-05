@@ -1,9 +1,10 @@
 import {
-  analyzeLoops,
-  validateWorkflow,
+  checkWorkflow,
+  flattenWorkflow,
   type Agent,
-  type LoopAnalysis,
+  type Pattern,
   type Ref,
+  type RepeatGroup,
   type ToolPreset,
   type WorkflowGraph,
   type WorkflowProblem,
@@ -11,6 +12,7 @@ import {
 } from '@app/schema';
 import { useEffect, useMemo } from 'react';
 import { usePinnedStore } from '@/stores/pinned';
+import type { CanvasKind } from './doc';
 
 export type Severity = WorkflowProblem['severity'];
 
@@ -18,7 +20,7 @@ export interface WorkflowCheck {
   problems: WorkflowProblem[];
   errors: number;
   warnings: number;
-  /** The worst severity per node / edge id. */
+  /** The worst severity per node / edge id, and per inner path of an instance. */
   nodes: Map<string, Severity>;
   edges: Map<string, Severity>;
   /** Edges that are the first-named place of an uncapped loop (shown with a `no cap` badge). */
@@ -33,11 +35,19 @@ function worse(a: Severity | undefined, b: Severity): Severity {
   return a === 'error' || b === 'error' ? 'error' : 'warning';
 }
 
+export interface CheckTarget {
+  kind: CanvasKind;
+  /** The pattern's repeat groups and id, when checking a pattern. */
+  repeat?: readonly RepeatGroup[];
+  selfId?: string;
+}
+
 /**
- * Live validation of a workflow (PLAN.md 9.5). Loads the pinned agents and tool presets it
- * uses, so library rules (tool coverage, missing references) apply once they arrive.
+ * Live validation of a workflow or pattern (PLAN.md 9.5). Loads the pinned patterns, agents
+ * and tool presets it uses (also inside pattern instances), so the rules that need them apply
+ * once they arrive.
  */
-export function useWorkflowCheck(graph: WorkflowGraph, loops?: LoopAnalysis): WorkflowCheck {
+export function useWorkflowCheck(graph: WorkflowGraph, target: CheckTarget): WorkflowCheck {
   const entries = usePinnedStore((s) => s.entries);
   const load = usePinnedStore((s) => s.load);
 
@@ -50,23 +60,31 @@ export function useWorkflowCheck(graph: WorkflowGraph, loops?: LoopAnalysis): Wo
     return {
       agent: (ref) => lookup<Agent>(ref),
       tool: (ref) => lookup<ToolPreset>(ref),
+      pattern: (ref) => lookup<Pattern>(ref),
     };
   }, [entries]);
 
-  // Everything the rules need: agents (nodes and evaluators), their tools, tool-step presets.
+  // Everything the rules need: patterns (nested ones as they arrive), then the agents and
+  // presets of the flattened graph, with every instance's bound agents in place.
   const wanted = useMemo(() => {
     const refs: Ref[] = [];
-    for (const n of graph.nodes) {
-      if (n.type === 'agent' && n.binding.kind === 'agent') refs.push(n.binding.agent);
-      if (
-        n.type === 'decision' &&
-        n.evaluator.type === 'agent' &&
-        n.evaluator.agent.kind === 'agent'
-      ) {
-        refs.push(n.evaluator.agent.agent);
+    const flat = flattenWorkflow(graph, resolver.pattern);
+    const visit = (g: WorkflowGraph) => {
+      for (const n of g.nodes) {
+        if (n.type === 'pattern') refs.push(n.pattern);
+        if (n.type === 'agent' && n.binding.kind === 'agent') refs.push(n.binding.agent);
+        if (
+          n.type === 'decision' &&
+          n.evaluator.type === 'agent' &&
+          n.evaluator.agent.kind === 'agent'
+        ) {
+          refs.push(n.evaluator.agent.agent);
+        }
+        if (n.type === 'toolStep') refs.push(n.tool);
       }
-      if (n.type === 'toolStep') refs.push(n.tool);
-    }
+    };
+    visit(graph);
+    visit(flat.graph);
     for (const ref of [...refs]) {
       if (ref.kind !== 'agent') continue;
       const agent = resolver.agent({ kind: 'agent', id: ref.id, version: ref.version });
@@ -81,15 +99,22 @@ export function useWorkflowCheck(graph: WorkflowGraph, loops?: LoopAnalysis): Wo
     }
   }, [wanted, load]);
 
+  const { kind, repeat, selfId } = target;
   return useMemo(() => {
-    const analysis = loops ?? analyzeLoops(graph);
-    const problems = validateWorkflow(graph, resolver, { loops: analysis });
+    const { problems } = checkWorkflow(graph, {
+      kind: kind === 'pattern' ? 'pattern' : 'workflow',
+      resolver,
+      ...(repeat ? { repeat } : {}),
+      ...(selfId ? { selfId } : {}),
+    });
     const nodes = new Map<string, Severity>();
     const edges = new Map<string, Severity>();
     const uncappedEdges = new Set<string>();
     for (const p of problems) {
-      for (const id of p.nodes) nodes.set(id, worse(nodes.get(id), p.severity));
-      for (const id of p.edges) edges.set(id, worse(edges.get(id), p.severity));
+      for (const id of [...p.nodes, ...(p.inner?.nodes ?? [])])
+        nodes.set(id, worse(nodes.get(id), p.severity));
+      for (const id of [...p.edges, ...(p.inner?.edges ?? [])])
+        edges.set(id, worse(edges.get(id), p.severity));
       if (p.rule === 'uncapped-loop' && p.edges[0]) uncappedEdges.add(p.edges[0]);
     }
     return {
@@ -102,5 +127,5 @@ export function useWorkflowCheck(graph: WorkflowGraph, loops?: LoopAnalysis): Wo
       blocking: problems.filter((p) => p.blocksSave),
       resolver,
     };
-  }, [graph, loops, resolver]);
+  }, [graph, kind, repeat, selfId, resolver]);
 }

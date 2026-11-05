@@ -4,7 +4,7 @@ import { FolderGit2, FolderKanban, LayoutTemplate, Plus, Workflow } from 'lucide
 import { useCallback, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
-import { ProjectEditor } from '@/canvas/project-editor';
+import { WorkflowEditor } from '@/canvas/workflow-editor';
 import { Field } from '@/components/field';
 import { NotFound } from '@/components/library-layout';
 import { DraftBadge } from '@/components/versioning';
@@ -376,7 +376,7 @@ export function ProjectCanvasRoute() {
   if (source.state === 'loading') return null;
   return (
     <ReactFlowProvider>
-      <ProjectEditor key={id} source={source} />
+      <WorkflowEditor key={id} kind="project" source={source} />
     </ReactFlowProvider>
   );
 }

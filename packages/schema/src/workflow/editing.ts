@@ -66,8 +66,16 @@ export const NODE_TYPE_INFO: Record<WorkflowNodeType, { label: string; descripti
   note: { label: 'Note', description: 'A comment on the canvas. Never executed.' },
 };
 
-/** Node types that need a library entity before they can be created. */
-export type NodeNeeds = { agent?: AgentRef; tool?: ToolRef };
+/**
+ * What some node types need before they can be created: an agent for agent nodes in a
+ * workflow, a slot (role, optional default agent) for agent nodes in a pattern, a preset for
+ * tool steps.
+ */
+export type NodeNeeds = {
+  agent?: AgentRef;
+  slot?: { role: string; defaultAgent?: AgentRef };
+  tool?: ToolRef;
+};
 
 /**
  * A new node of `type` with sensible defaults. Agent nodes need `needs.agent`, tool steps need
@@ -80,7 +88,20 @@ export function createNode(type: CanvasNodeType, id: string, needs: NodeNeeds = 
     case 'output':
       return { id, type, name: 'Result', payloadType: 'text' };
     case 'agent':
-      if (!needs.agent) throw new Error('an agent node needs an agent');
+      if (needs.slot) {
+        const { role, defaultAgent } = needs.slot;
+        return {
+          id,
+          type,
+          binding: {
+            kind: 'slot',
+            role,
+            description: '',
+            ...(defaultAgent ? { defaultAgent } : {}),
+          },
+        };
+      }
+      if (!needs.agent) throw new Error('an agent node needs an agent or a slot');
       return { id, type, binding: { kind: 'agent', agent: needs.agent } };
     case 'decision':
       return {

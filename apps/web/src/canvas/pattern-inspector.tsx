@@ -1,0 +1,348 @@
+/**
+ * Inspector parts that only exist in the pattern editor: the pattern itself (with its repeat
+ * groups), slots, and a node's repeat group.
+ */
+import { newLocalId, type AgentBinding, type RepeatGroup, type WorkflowNode } from '@app/schema';
+import { ExternalLink, Plus, Repeat2, Trash2 } from 'lucide-react';
+import { Link } from 'react-router';
+import { Field } from '@/components/field';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import type { FieldErrors } from '@/lib/validation';
+import { useEntities, useVersions } from '@/stores/library';
+import { usePinned } from '@/stores/pinned';
+import { nodeTitle, type Change, type WorkflowDoc } from './doc';
+import { EnumSelect, OptionalNumber } from './fields';
+
+type SlotBinding = Extract<AgentBinding, { kind: 'slot' }>;
+
+const NONE = '__none__';
+
+/** Role, description and optional default agent of a slot (agent node or evaluator). */
+export function SlotFields({
+  slot,
+  onChange,
+  idPrefix = 'slot',
+  roleLabel = 'Role',
+}: {
+  slot: SlotBinding;
+  onChange: (slot: SlotBinding, key: string) => void;
+  idPrefix?: string;
+  roleLabel?: string;
+}) {
+  const agents = useEntities('agent');
+  const versions = useVersions('agent');
+  return (
+    <section
+      className="space-y-4 rounded-lg border border-dashed border-sky-300 p-3"
+      aria-label="Slot"
+    >
+      <p className="text-xs text-muted-foreground">
+        A slot is a role. Whoever inserts the pattern binds it to an agent.
+      </p>
+      <Field label={roleLabel} htmlFor={`${idPrefix}-role`} hint="E.g. “Maker” or “Reviewer”.">
+        <Input
+          id={`${idPrefix}-role`}
+          value={slot.role}
+          onChange={(e) => onChange({ ...slot, role: e.target.value }, 'role')}
+        />
+      </Field>
+      <Field
+        label="What this role does"
+        htmlFor={`${idPrefix}-description`}
+        hint="Shown when binding the slot, to help pick the right agent."
+      >
+        <Textarea
+          id={`${idPrefix}-description`}
+          value={slot.description}
+          rows={3}
+          onChange={(e) => onChange({ ...slot, description: e.target.value }, 'description')}
+        />
+      </Field>
+      <Field
+        label="Default agent"
+        htmlFor={`${idPrefix}-default`}
+        hint="Optional. Pre-selected when the pattern is inserted."
+      >
+        <EnumSelect
+          id={`${idPrefix}-default`}
+          value={slot.defaultAgent?.id ?? NONE}
+          options={[
+            { value: NONE, label: 'None' },
+            ...(agents ?? []).map((a) => ({ value: a.id, label: a.name })),
+          ]}
+          onChange={(id) => {
+            const { defaultAgent: _old, ...rest } = slot;
+            onChange(
+              id === NONE
+                ? rest
+                : {
+                    ...rest,
+                    defaultAgent: { kind: 'agent', id, version: versions[id]?.version ?? 'v1' },
+                  },
+              'default',
+            );
+          }}
+        />
+      </Field>
+    </section>
+  );
+}
+
+/** Node types that can't be repeated: ports and notes exist once. */
+const NOT_REPEATABLE = new Set<WorkflowNode['type']>(['input', 'output', 'note']);
+
+const NEW_GROUP = '__new__';
+
+/** Which repeat group a node belongs to ("Worker 1…N", PLAN.md 10). */
+export function RepeatField({
+  node,
+  doc,
+  change,
+}: {
+  node: WorkflowNode;
+  doc: WorkflowDoc;
+  change: Change;
+}) {
+  if (NOT_REPEATABLE.has(node.type)) return null;
+  const current = doc.repeat.find((g) => g.nodes.includes(node.id));
+  const setGroup = (groupId: string) =>
+    change((d) => {
+      // Leave the current group (dropping it when it becomes empty), then join the new one.
+      let repeat = d.repeat
+        .map((g) => ({ ...g, nodes: g.nodes.filter((id) => id !== node.id) }))
+        .filter((g) => g.nodes.length > 0);
+      if (groupId === NEW_GROUP) {
+        const label = `${nodeTitle(node)}s`;
+        repeat = [
+          ...repeat,
+          {
+            id: newLocalId(
+              'group',
+              repeat.map((g) => g.id),
+            ),
+            label,
+            nodes: [node.id],
+            mode: 'parallel',
+            min: 1,
+            max: 9,
+            default: 2,
+          },
+        ];
+      } else if (groupId !== NONE) {
+        repeat = repeat.map((g) => (g.id === groupId ? { ...g, nodes: [...g.nodes, node.id] } : g));
+      }
+      return { ...d, repeat };
+    }, `node:${node.id}:repeat`);
+
+  return (
+    <Field
+      label="Repeat"
+      htmlFor="node-repeat"
+      hint={
+        current
+          ? `Copied ${String(current.min)}–${String(current.max)} times when the pattern is used; set the group up in the pattern panel (click the empty canvas).`
+          : 'Make this node one of N copies, e.g. Worker 1…N. The inserter chooses N.'
+      }
+    >
+      <EnumSelect
+        id="node-repeat"
+        value={current?.id ?? NONE}
+        options={[
+          { value: NONE, label: 'Exists once' },
+          ...doc.repeat.map((g) => ({ value: g.id, label: `Repeated as “${g.label}”` })),
+          { value: NEW_GROUP, label: 'New repeat group…' },
+        ]}
+        onChange={setGroup}
+      />
+    </Field>
+  );
+}
+
+/** One repeat group's settings in the pattern panel. */
+function RepeatGroupEditor({
+  group,
+  doc,
+  change,
+}: {
+  group: RepeatGroup;
+  doc: WorkflowDoc;
+  change: Change;
+}) {
+  const set = (patch: Partial<RepeatGroup>, key: string) =>
+    change(
+      (d) => ({ ...d, repeat: d.repeat.map((g) => (g.id === group.id ? { ...g, ...patch } : g)) }),
+      `repeat:${group.id}:${key}`,
+    );
+  const members = group.nodes
+    .map((id) => doc.workflow.nodes.find((n) => n.id === id))
+    .filter((n): n is WorkflowNode => !!n);
+  const rangeError =
+    group.min > group.default || group.default > group.max
+      ? 'Needs min ≤ default ≤ max.'
+      : undefined;
+  return (
+    <li className="space-y-3 rounded-lg border p-3" aria-label={`Repeat group ${group.label}`}>
+      <div className="flex items-center gap-2">
+        <Repeat2 className="size-4 shrink-0 text-violet-700" />
+        <Input
+          value={group.label}
+          aria-label="Group name"
+          className="h-8"
+          onChange={(e) => set({ label: e.target.value }, 'label')}
+        />
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={`Remove group ${group.label}`}
+          onClick={() =>
+            change((d) => ({ ...d, repeat: d.repeat.filter((g) => g.id !== group.id) }))
+          }
+        >
+          <Trash2 />
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {members.length === 0
+          ? 'No nodes yet.'
+          : `Repeats ${members.map((n) => nodeTitle(n)).join(', ')}.`}
+      </p>
+      <EnumSelect
+        aria-label="How copies run"
+        value={group.mode}
+        options={[
+          {
+            value: 'parallel',
+            label: 'In parallel',
+            description: 'every copy gets the same input (workers, members, branches)',
+          },
+          {
+            value: 'chain',
+            label: 'One after another',
+            description: 'each copy works on the previous one’s output (pipeline steps)',
+          },
+        ]}
+        onChange={(mode) => set({ mode }, 'mode')}
+      />
+      <div className="grid grid-cols-3 gap-2 text-xs">
+        {(['min', 'default', 'max'] as const).map((k) => (
+          <label key={k} className="space-y-1">
+            <span className="text-muted-foreground">
+              {k === 'default' ? 'Default' : k === 'min' ? 'Min' : 'Max'}
+            </span>
+            <OptionalNumber
+              value={group[k]}
+              aria-label={`${group.label} ${k}`}
+              className="h-8"
+              onChange={(v) => v !== undefined && v > 0 && set({ [k]: v }, k)}
+            />
+          </label>
+        ))}
+      </div>
+      {rangeError && <p className="text-xs text-destructive">{rangeError}</p>}
+    </li>
+  );
+}
+
+/** The pattern panel (nothing selected): name, description and repeat groups. */
+export function PatternPanelFields({
+  doc,
+  change,
+  errors,
+}: {
+  doc: WorkflowDoc;
+  change: Change;
+  errors: FieldErrors;
+}) {
+  const counts = doc.workflow.nodes.reduce<Record<string, number>>((acc, n) => {
+    acc[n.type] = (acc[n.type] ?? 0) + 1;
+    return acc;
+  }, {});
+  const ports = (counts.input ?? 0) + (counts.output ?? 0);
+  const slots = doc.workflow.nodes.filter(
+    (n) =>
+      (n.type === 'agent' && n.binding.kind === 'slot') ||
+      (n.type === 'decision' && n.evaluator.type === 'agent' && n.evaluator.agent.kind === 'slot'),
+  ).length;
+  return (
+    <div className="flex-1 space-y-4 overflow-y-auto p-4">
+      <Field label="Name" htmlFor="pattern-name" error={errors.name}>
+        <Input
+          id="pattern-name"
+          value={doc.name}
+          onChange={(e) => change((d) => ({ ...d, name: e.target.value }), 'pattern:name')}
+        />
+      </Field>
+      <Field label="Description" htmlFor="pattern-description">
+        <Textarea
+          id="pattern-description"
+          value={doc.description}
+          rows={3}
+          onChange={(e) =>
+            change((d) => ({ ...d, description: e.target.value }), 'pattern:description')
+          }
+        />
+      </Field>
+      <p className="text-xs text-muted-foreground">
+        {ports} port{ports === 1 ? '' : 's'} (Input and Output nodes), {slots} slot
+        {slots === 1 ? '' : 's'}, {doc.workflow.nodes.length} nodes in all
+        {counts.pattern
+          ? `, ${String(counts.pattern)} nested pattern${counts.pattern === 1 ? '' : 's'}`
+          : ''}
+        .
+      </p>
+      <section className="space-y-2" aria-label="Repeat groups">
+        <h3 className="text-sm font-semibold">Repeat groups</h3>
+        <p className="text-xs text-muted-foreground">
+          Nodes the pattern’s user can have N of. Add a node to a group from its{' '}
+          <span className="font-medium">Repeat</span> field.
+        </p>
+        {doc.repeat.length > 0 ? (
+          <ul className="space-y-2">
+            {doc.repeat.map((g) => (
+              <RepeatGroupEditor key={g.id} group={g} doc={doc} change={change} />
+            ))}
+          </ul>
+        ) : (
+          <p className="flex items-center gap-1.5 rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+            <Plus className="size-3.5" />
+            None yet. Select a slot (or any node but a port or note) and choose “New repeat group…”
+            in its Repeat field.
+          </p>
+        )}
+      </section>
+    </div>
+  );
+}
+
+/** A pattern instance: which pattern and version it pins, with a link to open it. */
+export function PatternInstanceSummary({
+  node,
+}: {
+  node: Extract<WorkflowNode, { type: 'pattern' }>;
+}) {
+  const pinned = usePinned('pattern', node.pattern.id, node.pattern.version);
+  const pattern = pinned.state === 'ready' ? pinned.entity : undefined;
+  return (
+    <section className="space-y-2 rounded-lg border p-3" aria-label="Pattern">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium">
+            {pattern?.name ?? (pinned.state === 'missing' ? 'Missing pattern' : node.pattern.id)}
+          </div>
+          <div className="font-mono text-xs text-muted-foreground">{node.pattern.version}</div>
+        </div>
+        <Button variant="outline" size="sm" asChild>
+          <Link to={`/patterns/${node.pattern.id}`}>
+            <ExternalLink />
+            Open
+          </Link>
+        </Button>
+      </div>
+      {pattern?.description && (
+        <p className="text-xs text-muted-foreground">{pattern.description}</p>
+      )}
+    </section>
+  );
+}
