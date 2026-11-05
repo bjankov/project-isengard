@@ -144,6 +144,9 @@ export function ProjectsPage() {
                       {t.workflow.nodes.length} nodes
                     </div>
                   </div>
+                  <Button size="xs" variant="ghost" asChild>
+                    <Link to={`/templates/${t.id}`}>Open</Link>
+                  </Button>
                   <Button size="xs" variant="outline" onClick={() => setCreating({ template: t })}>
                     Use
                   </Button>
@@ -366,6 +369,18 @@ function StartOption({
       <div className="text-sm font-medium">{title}</div>
       <div className="text-xs text-muted-foreground">{description}</div>
     </button>
+  );
+}
+
+export function TemplateCanvasRoute() {
+  const { id } = useParams();
+  const source = useEditorSource('template', id, () => undefined);
+  if (source.state === 'notFound') return <NotFound what="template" backHref="/projects" />;
+  if (source.state === 'loading') return null;
+  return (
+    <ReactFlowProvider>
+      <WorkflowEditor key={id} kind="template" source={source} />
+    </ReactFlowProvider>
   );
 }
 

@@ -362,3 +362,94 @@ Format: date, milestone, decision, reason.
 - Templates that pin a fork branch that was promoted (and so deleted): handle in M6 with references and deletion.
 - Context preview for agents inside pattern instances: v2 (`V2_BACKLOG.md`).
 - Unused fork branches left by "Use library version": M6, with deleting forks.
+
+## 2026-11-05 (M6)
+
+### Agreed at planning (user decisions)
+- **A cascade writes new versions straight to `main`.** Accepting a case gives the referrer its next main version (no draft, no merge step), so "each choice produces the expected pinned versions" holds right away.
+  - If the referrer has an unmerged draft, the draft gets the same re-pins where it still has them. That commit has the new main version as a second parent, so merging the draft later reports no false conflict.
+- **"Keep as local copy" embeds the deleted entity** in the referrer: `localCopies` (agents, patterns, templates, projects), keyed by the pinned reference (`skill/<id>@v2`) and holding that version's content.
+  - References stay as they are and resolve to a local copy when the library no longer has the entity, so flattening, validation and the canvas need almost no new code.
+  - A copied agent's or pattern's own copies move up next to it, so copies never nest.
+  - **"Replace with a placeholder"** is `deletedRefs` (same keys, last known name). The reference stays, resolves to nothing, and is a `missing-ref` error ("“Planner” (v3) was deleted. Replace it") until replaced. PLAN.md 8.4 says "the reference is removed"; keeping it in place with a marker has the same effect and keeps the node and its edges.
+  - Both fields are optional and left out of the files when empty, so existing files don't change.
+- **Templates open in the shared canvas** (`/templates/:id`): no workspace, overrides, context preview or Save as template. They are versioned like patterns. This makes PLAN.md 8.3 (update icons in templates) possible.
+- **The cascade offers every main pin older than the new version**, e.g. `v1 → v3` for an agent still on `v1`, not only pins of the previous version.
+
+### Cascade (PLAN.md 8.2)
+- **Cases are per location:** an agent's skill or tool entry, or a workflow node such as an agent node, an evaluator agent, a tool step, a pattern reference, a slot binding or a slot's default agent (`refLocations` in `packages/schema`). PLAN.md says "each case individually", and a project can pin the same agent on two nodes.
+- **An entity reached through several paths** (a project using two updated agents) gets one new version containing all its accepted re-pins.
+- **A case applies only when its target is updated:** it is a root, or one of the target's own cases is accepted (`enabledCases`, shared by client and server). The dialog disables a case whose target is declined. The server refuses accepted cases that don't apply.
+- **Forks:**
+  - `in-fork`: a fork branch (pinned by a project) whose content pins the old version. Accepting commits the re-pin to the fork branch. Projects pinning the fork need nothing, because they pin the branch.
+  - `pins-fork`: a node pins a fork of the updated entity. Accepting re-pins the node to the new main version and drops the customization.
+  - Both are listed but unchecked by default (PLAN.md 8.2). Exception: a `pins-fork` case whose fork branch no longer exists is checked, because accepting is the only fix.
+- **Updates that would add errors are refused:** errors that the workflow didn't have before, checked with every change in place through an overlay of the not-yet-written versions. The preview flags them for the default choices and the dialog unchecks them. Applying them returns `400 workflow`. Forks aren't checked, like drafts.
+- **All or nothing:** one commit per updated entity, chained on `main`, with a note such as "Uses skill write-tests v2" shown in History. `main`, the new tags and the fork and draft commits then move in one `update-ref` transaction (`LibraryStore.applyBatch`).
+- **API:**
+  - `POST /api/cascade/preview {roots}` returns the entities, the cases and the problems.
+  - `POST /api/cascade/apply {roots, accept}`.
+  - Several roots are allowed, which the deletion follow-up uses.
+- **Where the dialog opens:**
+  - after **Merge** in any library editor and after **Merge to main** of a fork, only when something is affected
+  - after deleting with references, for the entities that got a new version
+  - from the editor header: "N users on older versions"
+  - It is one global dialog (`useCascade`).
+
+### Update notifications (PLAN.md 8.3)
+- **Where the "v2 → v4" badge appears:**
+  - agent, pattern, tool-step and evaluator nodes
+  - a pattern instance's slot bindings and its pinned pattern, in the inspector
+  - an agent's skills and tools in the agent editor (an addition beyond PLAN.md)
+- **The popover** shows the merge notes in between, **Compare** (a diff of the stored files) and **Update to vN**. Updating is an ordinary unsaved change, and overrides are untouched.
+- **A pin of a fork branch that no longer exists** shows "fork gone → vN" with **Use vN**. This is how templates that pinned a since-promoted project fork get fixed (the M5 open issue).
+
+### Deleting referenced entities (PLAN.md 8.4)
+- **`DELETE` still returns 409 with the references.** `POST /api/<kind>/<id>/delete {all?, each?}` takes a resolution for every referencing entity on main. Those entities get their next version with the copies or placeholders (and their drafts get the same). The entity is removed and its branches deleted, all in one transaction.
+- **References from drafts and forks don't count** (PLAN.md 8.4). A fork pinned by a project that pins the deleted entity shows it as missing until the fork is edited.
+- **Old versions are not rewritten:** a project pinning the referrer's older version still resolves the deleted entity as missing. The cascade dialog opens right after the deletion and offers them the new versions that keep the copy.
+- **Local copies resolve everywhere,** through `localLookup` / the server's `Loader` / the web pinned store. Copies kept by any loaded entity count, which is safe because pinned versions never change. The canvas shows a **local copy** chip; placeholders show "Deleted: <name>".
+- **Unused copies and placeholders are dropped on save** (`pruneLocal` on the server).
+- **Agents can't be merged while they pin a skill or tool preset that is gone** without a local copy. Workflows already had this rule (`missing-ref`). This closes the M2 open issue: a version on main must be complete.
+
+### Forks (M5 leftovers)
+- **A fork belongs to its container:** the branch `fork-<container id>-<node id>`.
+  - Creating a project or template that pins other containers' forks (Save as template, a project from a template) gives it its own copies of those branches, so promoting one container's fork never breaks another.
+  - After a container is saved, merged or its branch discarded, its forks that nothing pins any more are deleted. "Nothing" means none of its own refs or branches (a pattern fork pins its nested forks) and no entity on `main`. This covers "Use library version", which used to leave the branch behind.
+  - Deleting a container deletes the forks it owns, unless another entity on `main` still pins them.
+
+### Restore defaults (PLAN.md 8.4)
+- **Settings → Restore defaults** (`POST /api/settings/restore-defaults`) adds back every built-in pattern missing from `main`, under its old id and as its next version. Edited or existing built-ins are untouched. The demo content arrives in M7.
+
+### Web
+- **The pinned store resolves local copies:**
+  - `registerLocal` takes the open workflow's or agent's copies and those of every loaded agent or pattern
+  - entries that came back 404 before a copy was known resolve when it arrives
+  - `Pinned` carries `local` and `deleted` for the chips
+- **`CanvasKind` includes `template`.** Gates that meant "concrete agents" are now `kind !== 'pattern'`. Overrides, the workspace, the context preview and Save as template stay project-only.
+
+### Tests (2026-11-05, M6)
+- **Server (`propagation.test.ts`, 11 tests):**
+  - the done-when scenario (skill → 2 agents → 3 projects), with mixed choices and overrides kept
+  - declined targets
+  - forks listed and updated
+  - drafts kept in step and merged without a conflict
+  - updates that would add errors
+  - copies and placeholders
+  - a workflow merging with a local copy
+  - draft-only references
+  - fork ownership and cleanup
+  - Restore defaults
+- **Browser (`e2e/propagation.spec.ts`, 4 tests):**
+  - the done-when flow in the UI, including per-case choices, disabled dependants and the per-instance update badge
+  - deleting with a local copy
+  - templates on the canvas
+  - Restore defaults
+
+### M6 review answers (2026-11-05, user decisions)
+- **The canvas clipboard carries local copies.** Copying keeps the local copies and placeholders the copied nodes reach (via `pruneLocal`). Pasting adds them to the target workflow, and copies already there win: the same key always holds the same pinned version.
+- **The container a fork is promoted from is left out of the cascade** (`exclude` on `POST /api/cascade/preview` and `/apply`). Promoting saves its draft, which already pins the new version, and its next merge publishes that. Offering it a separate new `main` version as well was confusing. Other entities pinning the promoted fork (e.g. old templates) are still listed.
+- **The flaky unhandled error in `pnpm test` is fixed** (the user asked to fix it right away, since the cause was known).
+  - **Cause:** an EPIPE when writing to a git child's stdin after git had already exited. Most git commands never read stdin.
+  - **Fix:** `LibraryGit.run` ignores errors on `child.stdin`. Failures still surface through git's exit code.
+  - **Test:** a regression test reproduces the EPIPE deterministically.

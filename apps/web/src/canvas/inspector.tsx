@@ -296,14 +296,22 @@ function JoinField({ node, inputs, set }: { node: WorkflowNode; inputs: number; 
 
 // ---- Project ----
 
-function ProjectPanel({ doc, change, errors, onWorkspaceCheck }: InspectorProps) {
+function ProjectPanel({ doc, change, errors, onWorkspaceCheck, kind }: InspectorProps) {
+  const isTemplate = kind === 'template';
   const counts = doc.workflow.nodes.reduce<Record<string, number>>((acc, n) => {
     acc[n.type] = (acc[n.type] ?? 0) + 1;
     return acc;
   }, {});
   return (
     <>
-      <PanelHeader title="Project" subtitle="Select a node or edge to configure it." />
+      <PanelHeader
+        title={isTemplate ? 'Template' : 'Project'}
+        subtitle={
+          isTemplate
+            ? 'Select a node or edge to configure it. New projects can start from this workflow.'
+            : 'Select a node or edge to configure it.'
+        }
+      />
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
         <Field label="Name" htmlFor="project-name" error={errors.name}>
           <Input
@@ -322,17 +330,19 @@ function ProjectPanel({ doc, change, errors, onWorkspaceCheck }: InspectorProps)
             }
           />
         </Field>
-        <Field label="Workspace" htmlFor="project-workspace">
-          <WorkspaceField
-            id="project-workspace"
-            value={doc.workspacePath}
-            onChange={(workspacePath) =>
-              change((d) => ({ ...d, workspacePath }), 'project:workspace')
-            }
-            onCheck={onWorkspaceCheck}
-            error={errors.workspacePath}
-          />
-        </Field>
+        {!isTemplate && (
+          <Field label="Workspace" htmlFor="project-workspace">
+            <WorkspaceField
+              id="project-workspace"
+              value={doc.workspacePath}
+              onChange={(workspacePath) =>
+                change((d) => ({ ...d, workspacePath }), 'project:workspace')
+              }
+              onCheck={onWorkspaceCheck}
+              error={errors.workspacePath}
+            />
+          </Field>
+        )}
         <div className="text-xs text-muted-foreground">
           {doc.workflow.nodes.length} nodes, {doc.workflow.edges.length} edges
           {Object.keys(counts).length > 0 &&
@@ -501,6 +511,7 @@ function NodePanel(props: InspectorProps & { node: WorkflowNode }) {
 
         {node.type === 'agent' && node.binding.kind === 'agent' && (
           <AgentInspector
+            kind={kind}
             projectId={entityId}
             nodeId={node.id}
             doc={doc}

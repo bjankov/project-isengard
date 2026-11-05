@@ -9,7 +9,13 @@ import {
   createPatternNode,
   flattenWorkflow,
   patternPorts,
+  pruneLocal,
+  repin,
+  withLocal,
+  type DeletedRef,
+  type LocalCopy,
   type PatternLookup,
+  type Project,
   type WorkflowEdge,
   type WorkflowNode,
   extractSubgraph,
@@ -48,7 +54,7 @@ import { useEntityEditor, type EditorSourceReady } from '@/hooks/use-entity-edit
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useUndoHistory } from '@/hooks/use-undo';
 import { useEntities } from '@/stores/library';
-import { usePinnedStore } from '@/stores/pinned';
+import { usePinnedStore, useRegisterLocal } from '@/stores/pinned';
 import { useSettings } from '@/stores/settings';
 import { CanvasContext, type CanvasContextValue } from './context';
 import {
@@ -97,7 +103,17 @@ const ID_PREFIX: Record<CanvasNodeType, string> = {
 };
 
 /** Copied nodes, kept for the session so they can be pasted into another project too. */
-let clipboard: (Subgraph & { overrides: Record<string, AgentOverride> }) | undefined;
+/**
+ * Copied nodes, for the session. Besides the edges among them and their overrides, it carries
+ * the local copies and placeholders of deleted entities they pin, so pasting them into another
+ * workflow keeps them working.
+ */
+let clipboard:
+  | (Subgraph & {
+      overrides: Record<string, AgentOverride>;
+      local: { localCopies?: Record<string, LocalCopy>; deletedRefs?: Record<string, DeletedRef> };
+    })
+  | undefined;
 
 const snap = (v: number) => Math.round(v / GRID) * GRID;
 
@@ -138,6 +154,8 @@ export function WorkflowEditor({
   const isPattern = kind === 'pattern';
 
   const doc = useMemo(() => toDoc(kind, editor.draft), [kind, editor.draft]);
+  // Deleted entities this workflow keeps as local copies resolve like library ones.
+  useRegisterLocal(doc);
   const { update } = editor;
   const restore = useCallback(
     (next: WorkflowDoc) => update(() => fromDoc(kind, next)),
@@ -803,10 +821,20 @@ export function WorkflowEditor({
       const o = doc.overrides[id];
       if (o) overrides[id] = o;
     }
-    clipboard = { ...sub, overrides };
+    // Only the copies the copied nodes reach (and those the copies themselves pin).
+    const { localCopies, deletedRefs } = pruneLocal('template', {
+      id: 'clipboard-aaaaaa',
+      name: '',
+      description: '',
+      workflow: { nodes: sub.nodes, edges: [] },
+      layout: { nodes: {}, expanded: [] },
+      ...(doc.localCopies ? { localCopies: doc.localCopies } : {}),
+      ...(doc.deletedRefs ? { deletedRefs: doc.deletedRefs } : {}),
+    });
+    clipboard = { ...sub, overrides, local: { localCopies, deletedRefs } };
     pasteCount.current = 0;
     toast.success(`Copied ${sub.nodes.length} node${sub.nodes.length === 1 ? '' : 's'}`);
-  }, [selection.nodes, graph, doc.layout.nodes, doc.overrides]);
+  }, [selection.nodes, graph, doc.layout.nodes, doc.overrides, doc.localCopies, doc.deletedRefs]);
 
   const paste = useCallback(() => {
     if (!clipboard) return;
@@ -822,8 +850,11 @@ export function WorkflowEditor({
       const id = clone.idMap[old];
       if (id) overrides[id] = structuredClone(o);
     }
+    const { localCopies, deletedRefs } = clipboard.local;
     change((d) => ({
       ...d,
+      // Copies already here win; the same key always holds the same pinned version.
+      ...withLocal({ ...localCopies, ...d.localCopies }, { ...deletedRefs, ...d.deletedRefs }),
       overrides: { ...d.overrides, ...overrides },
       workflow: {
         nodes: [...d.workflow.nodes, ...clone.nodes],
@@ -861,7 +892,13 @@ export function WorkflowEditor({
       } else if (mod && key === 'a') {
         e.preventDefault();
         setSelection({ nodes: graph.nodes.map((n) => n.id), edges: [] });
-      } else if (!mod && !e.altKey && key === 'p' && after?.type === 'agent' && !isPattern) {
+      } else if (
+        !mod &&
+        !e.altKey &&
+        key === 'p' &&
+        after?.type === 'agent' &&
+        kind === 'project'
+      ) {
         e.preventDefault();
         setPreview(after.id);
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -871,7 +908,7 @@ export function WorkflowEditor({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [history, copy, paste, deleteSelection, graph.nodes, after, isPattern]);
+  }, [history, copy, paste, deleteSelection, graph.nodes, after, kind]);
 
   const context: CanvasContextValue = useMemo(
     () => ({
@@ -885,6 +922,8 @@ export function WorkflowEditor({
       tools,
       expanded,
       toggleExpanded,
+      repin: (location: string, version: string) =>
+        change((d) => repin('project', d as unknown as Project, location, version) as never),
     }),
     [
       kind,
@@ -897,6 +936,7 @@ export function WorkflowEditor({
       tools,
       expanded,
       toggleExpanded,
+      change,
     ],
   );
 
@@ -918,12 +958,21 @@ export function WorkflowEditor({
     <div className="flex h-full min-h-0 flex-col">
       <UnsavedChangesGuard dirty={editor.dirty} />
       <EditorHeader
-        eyebrow={isPattern ? (onFork ? 'Pattern · project fork' : 'Pattern') : 'Project'}
+        eyebrow={
+          isPattern
+            ? onFork
+              ? 'Pattern · project fork'
+              : 'Pattern'
+            : kind === 'template'
+              ? 'Template'
+              : 'Project'
+        }
         title={editor.saved?.name ?? doc.name}
         dirty={editor.dirty}
         saving={editor.saving}
         onSave={save}
         onDelete={editor.saved && !onFork ? editor.remove : undefined}
+        onDeleteWithReferences={editor.removeWithReferences}
         versioning={versioning}
         actions={
           <>
@@ -957,7 +1006,7 @@ export function WorkflowEditor({
                 <TooltipContent>Redo ({isMac ? '⇧⌘Z' : 'Ctrl+Shift+Z'})</TooltipContent>
               </Tooltip>
             </div>
-            {!isPattern && (
+            {kind === 'project' && (
               <Button variant="ghost" size="sm" onClick={() => setTemplateOpen(true)}>
                 <BookmarkPlus />
                 Save as template
@@ -1078,7 +1127,7 @@ export function WorkflowEditor({
         selfId={isPattern ? entityId : undefined}
         onInsert={(insert) => insertPattern(insert, inserting?.at)}
       />
-      {!isPattern && (
+      {kind === 'project' && (
         <>
           <SaveAsTemplateDialog open={templateOpen} onOpenChange={setTemplateOpen} doc={doc} />
           <ContextPreview

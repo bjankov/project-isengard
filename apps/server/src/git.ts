@@ -168,6 +168,10 @@ export class LibraryGit {
       child.stdout.on('data', (d: Buffer) => out.push(d));
       child.stderr.on('data', (d: Buffer) => err.push(d));
       child.on('error', reject);
+      // Git may exit before reading stdin (most commands never read it), and writing to it
+      // then fails with EPIPE. Without a listener that is an uncaught exception that could take
+      // the server down; the exit code below still reports real failures.
+      child.stdin.on('error', () => undefined);
       child.on('close', (code) => {
         if (code === 0) resolve(Buffer.concat(out).toString('utf8'));
         else

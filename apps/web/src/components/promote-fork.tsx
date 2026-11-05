@@ -4,7 +4,13 @@
  * fork started), or save it as a new entity. Either way the fork branch is gone afterwards, and
  * the caller re-pins the node.
  */
-import { MERGE_NOTE_MAX, normalizeMergeNote, type EntityInput, type Ref } from '@app/schema';
+import {
+  MERGE_NOTE_MAX,
+  normalizeMergeNote,
+  type EntityInput,
+  type EntityKind,
+  type Ref,
+} from '@app/schema';
 import { GitMerge, CopyPlus } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -22,6 +28,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { useFetched } from '@/hooks/use-fetched';
 import { ApiError, api } from '@/lib/api';
+import { offerCascade } from '@/stores/cascade';
 import { useLibrary, useVersions } from '@/stores/library';
 
 type ForkKind = 'agent' | 'pattern';
@@ -39,8 +46,15 @@ export function PromoteFork({
   branch,
   name,
   disabledReason,
+  container,
   onPromoted,
 }: {
+  /**
+   * The project, template or pattern the fork belongs to. It is left out of the cascade after
+   * merging: its draft already pins the new version (saved by `onPromoted`), and its next merge
+   * publishes it.
+   */
+  container: { kind: EntityKind; id: string };
   kind: ForkKind;
   id: string;
   /** The fork branch the node pins. */
@@ -76,6 +90,12 @@ export function PromoteFork({
       });
       setDialog(null);
       onPromoted({ id, version: res.version });
+      // PLAN.md 7.7: promoting runs the propagation flow.
+      void offerCascade(
+        [{ kind, id }],
+        `The fork was merged: “${res.entity.name}” is now ${res.version}.`,
+        [container],
+      );
     } catch (err) {
       if (err instanceof ApiError && err.body?.error === 'merge_conflict') {
         setDialog('conflict');

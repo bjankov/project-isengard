@@ -108,6 +108,7 @@ export function RefCard({
   onRemove,
   extra,
   missing,
+  missingLabel = 'missing from library',
   badge,
 }: {
   icon?: React.ReactNode;
@@ -119,6 +120,8 @@ export function RefCard({
   onRemove: () => void;
   extra?: React.ReactNode;
   missing?: boolean;
+  /** What to say when missing, e.g. "deleted (placeholder)". */
+  missingLabel?: string;
 }) {
   return (
     <div className="group flex items-start gap-3 rounded-lg border bg-card p-3">
@@ -136,7 +139,7 @@ export function RefCard({
             <span className="truncate text-sm font-medium">{title}</span>
           )}
           {badge}
-          {missing && <span className="text-xs text-destructive">missing from library</span>}
+          {missing && <span className="text-xs text-destructive">{missingLabel}</span>}
         </div>
         {subtitle && <div className="mt-0.5 text-xs text-muted-foreground">{subtitle}</div>}
         {extra && <div className="mt-1.5 flex flex-wrap gap-1">{extra}</div>}

@@ -1,10 +1,9 @@
 import { z } from 'zod';
-import { Agent, AgentDefaults, AgentOverride, ModelRef } from './agent.js';
-import { EntityKind, EntityMeta, LocalId, NodePath, type Ref } from './ids.js';
+import { Agent, AgentDefaults, AgentOverride, DeletedRef, ModelRef } from './agent.js';
+import { EntityKind, EntityMeta, LocalId, NodePath, RefKey } from './ids.js';
 import { Skill } from './skill.js';
 import { ToolPreset } from './tool.js';
 import { Layout, WorkflowGraph } from './workflow/graph.js';
-import type { AgentBinding, WorkflowNode } from './workflow/nodes.js';
 
 /**
  * A group of pattern nodes that an instance copies N times ("Worker 1…N", PLAN.md 10). How
@@ -29,21 +28,46 @@ export const RepeatGroup = z
   });
 export type RepeatGroup = z.infer<typeof RepeatGroup>;
 
-/**
- * A reusable sub-graph. Input/Output nodes are its ports; agent nodes bound to slots are its
- * slots. Patterns may contain other patterns.
- */
-export const Pattern = EntityMeta.extend({
+const PatternBody = EntityMeta.extend({
   workflow: WorkflowGraph,
   layout: Layout,
   repeat: z.array(RepeatGroup).default([]),
 });
+
+/**
+ * Content of a deleted entity a workflow (or pattern) keeps as a local copy (PLAN.md 8.4). A
+ * copied agent's or pattern's own local copies are moved up into the container's map, so
+ * copies never nest.
+ */
+export const LocalCopy = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('skill'), entity: Skill }),
+  z.object({ kind: z.literal('tool'), entity: ToolPreset }),
+  z.object({ kind: z.literal('agent'), entity: Agent }),
+  z.object({ kind: z.literal('pattern'), entity: PatternBody }),
+]);
+export type LocalCopy = z.infer<typeof LocalCopy>;
+
+/**
+ * Deleted entities kept as local copies, and placeholders for deleted entities, keyed by the
+ * pinned reference (`agent/<id>@v3`). References resolve to local copies first.
+ */
+const localFields = {
+  localCopies: z.record(RefKey, LocalCopy).optional(),
+  deletedRefs: z.record(RefKey, DeletedRef).optional(),
+};
+
+/**
+ * A reusable sub-graph. Input/Output nodes are its ports; agent nodes bound to slots are its
+ * slots. Patterns may contain other patterns.
+ */
+export const Pattern = PatternBody.extend(localFields);
 export type Pattern = z.infer<typeof Pattern>;
 
 /** A saved workflow that new projects can start from. */
 export const Template = EntityMeta.extend({
   workflow: WorkflowGraph,
   layout: Layout,
+  ...localFields,
 });
 export type Template = z.infer<typeof Template>;
 
@@ -58,6 +82,7 @@ export const Project = EntityMeta.extend({
   overrides: z.record(NodePath, AgentOverride).default({}),
   workflow: WorkflowGraph,
   layout: Layout,
+  ...localFields,
 });
 export type Project = z.infer<typeof Project>;
 
@@ -142,51 +167,3 @@ export const EntitySummary = z.object({
   description: z.string(),
 });
 export type EntitySummary = z.infer<typeof EntitySummary>;
-
-// ---- References ----
-
-function bindingRefs(b: AgentBinding): Ref[] {
-  if (b.kind === 'agent') return [b.agent];
-  return b.defaultAgent ? [b.defaultAgent] : [];
-}
-
-function nodeRefs(n: WorkflowNode): Ref[] {
-  switch (n.type) {
-    case 'agent':
-      return bindingRefs(n.binding);
-    case 'decision':
-      return n.evaluator.type === 'agent' ? bindingRefs(n.evaluator.agent) : [];
-    case 'toolStep':
-      return [n.tool];
-    case 'pattern':
-      return [n.pattern, ...Object.values(n.bindings).flatMap(bindingRefs)];
-    default:
-      return [];
-  }
-}
-
-/** Every outgoing reference from an entity to another library entity (direct, not transitive). */
-export function collectRefs<K extends EntityKind>(kind: K, entity: EntityByKind[K]): Ref[] {
-  let refs: Ref[];
-  switch (kind) {
-    case 'agent': {
-      const a = entity as Agent;
-      refs = [...a.skills, ...a.tools];
-      break;
-    }
-    case 'pattern':
-    case 'template':
-    case 'project':
-      refs = (entity as Pattern | Template | Project).workflow.nodes.flatMap(nodeRefs);
-      break;
-    default:
-      refs = [];
-  }
-  const seen = new Set<string>();
-  return refs.filter((r) => {
-    const key = `${r.kind}/${r.id}@${r.version}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}

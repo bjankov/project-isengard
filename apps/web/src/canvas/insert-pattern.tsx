@@ -186,7 +186,7 @@ function ConfigureInsert({
   const [chosen, setChosen] = useState<Record<string, string>>({});
   const agentOf = (s: PatternSlot) => chosen[s.key] ?? s.defaultAgent?.id ?? NONE;
   const { inputs, outputs } = patternPorts(pinned);
-  const bindsSlots = kind === 'project';
+  const bindsSlots = kind !== 'pattern';
   const unbound = bindsSlots ? (slots ?? []).filter((s) => agentOf(s) === NONE).length : 0;
 
   const insert = () => {
@@ -304,11 +304,14 @@ export function SlotBindingRow({
   value,
   onChange,
   compact,
+  extra,
 }: {
   slot: PatternSlot;
   value: string;
   onChange: (agentId: string) => void;
   compact?: boolean;
+  /** Shown after the role, e.g. an update badge. */
+  extra?: React.ReactNode;
 }) {
   const agents = useEntities('agent');
   return (
@@ -325,6 +328,7 @@ export function SlotBindingRow({
           {slot.evaluator && (
             <span className="ml-1 text-xs font-normal text-muted-foreground">(decides)</span>
           )}
+          {extra && <span className="ml-1.5 inline-flex align-middle">{extra}</span>}
         </div>
         {slot.description && (
           <div className="line-clamp-2 text-xs text-muted-foreground">{slot.description}</div>

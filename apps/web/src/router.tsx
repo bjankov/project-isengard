@@ -2,7 +2,7 @@ import { createBrowserRouter, Navigate } from 'react-router';
 import { AppShell } from '@/components/app-shell';
 import { AgentEditorRoute, AgentsIndex, AgentsLayout } from '@/routes/agents';
 import { PatternCanvasRoute, PatternsPage } from '@/routes/patterns';
-import { ProjectCanvasRoute, ProjectsPage } from '@/routes/projects';
+import { ProjectCanvasRoute, ProjectsPage, TemplateCanvasRoute } from '@/routes/projects';
 import { SettingsPage } from '@/routes/settings';
 import { SkillEditorRoute, SkillsIndex, SkillsLayout } from '@/routes/skills';
 import { BuiltinToolRoute, ToolEditorRoute, ToolsIndex, ToolsLayout } from '@/routes/tools';
@@ -14,6 +14,7 @@ export const router = createBrowserRouter([
       { index: true, element: <Navigate to="/projects" replace /> },
       { path: '/projects', element: <ProjectsPage /> },
       { path: '/projects/:id', element: <ProjectCanvasRoute /> },
+      { path: '/templates/:id', element: <TemplateCanvasRoute /> },
       {
         path: '/agents',
         element: <AgentsLayout />,

@@ -15,6 +15,7 @@ import {
   type FlatWorkflow,
 } from './patterns.js';
 import {
+  missingRefText,
   nodeName,
   validateWorkflow,
   type WorkflowProblem,
@@ -207,7 +208,7 @@ export function checkWorkflow(graph: WorkflowGraph, options: CheckOptions = {}):
         id: `missing-ref:${id}`,
         rule: 'missing-ref',
         severity: 'error',
-        message: `Pattern ${missing.pattern.id} (${missing.pattern.version})${id === node.id ? '' : ` inside ${name(node.id)}`} no longer exists.`,
+        message: `${missingRefText('Pattern', missing.pattern, resolver)}${id === node.id ? '' : ` (inside ${name(node.id)})`}.`,
       });
     }
     const pattern = lookup?.(node.pattern);

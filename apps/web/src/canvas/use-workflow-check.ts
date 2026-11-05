@@ -49,6 +49,7 @@ export interface CheckTarget {
  */
 export function useWorkflowCheck(graph: WorkflowGraph, target: CheckTarget): WorkflowCheck {
   const entries = usePinnedStore((s) => s.entries);
+  const deleted = usePinnedStore((s) => s.deleted);
   const load = usePinnedStore((s) => s.load);
 
   const resolver = useMemo<WorkflowResolver>(() => {
@@ -61,8 +62,12 @@ export function useWorkflowCheck(graph: WorkflowGraph, target: CheckTarget): Wor
       agent: (ref) => lookup<Agent>(ref),
       tool: (ref) => lookup<ToolPreset>(ref),
       pattern: (ref) => lookup<Pattern>(ref),
+      deleted: (ref) => {
+        const name = deleted[keyOf(ref)];
+        return name === undefined ? undefined : { name };
+      },
     };
-  }, [entries]);
+  }, [entries, deleted]);
 
   // Everything the rules need: patterns (nested ones as they arrive), then the agents and
   // presets of the flattened graph, with every instance's bound agents in place.

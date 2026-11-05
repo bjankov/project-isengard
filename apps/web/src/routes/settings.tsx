@@ -1,5 +1,5 @@
 import { Settings as SettingsSchema, modelKey, type ModelOption, type Settings } from '@app/schema';
-import { Copy, Plus, X } from 'lucide-react';
+import { Copy, Loader2, Plus, RotateCcw, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { AgentDefaultsFields } from '@/components/agent-defaults';
@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { ApiError, api } from '@/lib/api';
 import { errorAt, issuesToErrors, type FieldErrors } from '@/lib/validation';
+import { useLibrary } from '@/stores/library';
 import { useSettings, useSettingsStore } from '@/stores/settings';
 import { sameData } from '@/lib/same';
 
@@ -189,6 +190,17 @@ function SettingsForm({ saved }: { saved: Settings }) {
         </Section>
 
         <Section
+          title="Built-in patterns"
+          description="The 10 patterns the app ships with are ordinary entities: edit or delete them like any other."
+          actions={<RestoreDefaultsButton />}
+        >
+          <p className="text-xs text-muted-foreground">
+            Restore defaults adds back every built-in pattern that was deleted, as its next version.
+            Built-ins you edited are left as they are.
+          </p>
+        </Section>
+
+        <Section
           title="Library store"
           description="The git repository holding every skill, tool preset, agent, pattern and project."
         >
@@ -216,5 +228,43 @@ function SettingsForm({ saved }: { saved: Settings }) {
         </Section>
       </EditorBody>
     </div>
+  );
+}
+
+function RestoreDefaultsButton() {
+  const [busy, setBusy] = useState(false);
+  const load = useLibrary((st) => st.load);
+  const restore = async () => {
+    setBusy(true);
+    try {
+      const { restored } = await api.restoreDefaults();
+      await load('pattern');
+      if (restored.length === 0) {
+        toast.success('Nothing to restore', { description: 'Every built-in pattern is there.' });
+      } else {
+        toast.success(
+          `Restored ${restored.length === 1 ? '1 built-in pattern' : `${String(restored.length)} built-in patterns`}`,
+          { description: restored.map((r) => `${r.name} (${r.version})`).join(', ') },
+        );
+      }
+    } catch (err) {
+      toast.error('Could not restore the defaults', {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      disabled={busy}
+      onClick={() => void restore()}
+    >
+      {busy ? <Loader2 className="animate-spin" /> : <RotateCcw />}
+      Restore defaults
+    </Button>
   );
 }

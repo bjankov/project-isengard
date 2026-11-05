@@ -169,6 +169,7 @@ function SkillEditor({ source }: { source: EditorSourceReady<'skill'> }) {
         saving={editor.saving}
         onSave={save}
         onDelete={editor.saved ? editor.remove : undefined}
+        onDeleteWithReferences={editor.removeWithReferences}
         versioning={editor.versioning}
         actions={
           <>

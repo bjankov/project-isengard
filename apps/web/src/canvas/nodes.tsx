@@ -20,6 +20,7 @@ import {
   type NodeTypes,
 } from '@xyflow/react';
 import {
+  Archive,
   CircleAlert,
   GitFork as ForkIcon,
   Maximize2,
@@ -31,6 +32,7 @@ import {
 } from 'lucide-react';
 import { modelLabel } from '@/components/agent-defaults';
 import { BuiltinIcon } from '@/components/tools';
+import { UpdateAvailable } from '@/components/update-available';
 import { cn } from '@/lib/utils';
 import { usePinned } from '@/stores/pinned';
 import { useCanvasContext } from './context';
@@ -264,6 +266,30 @@ function OutputNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   );
 }
 
+/** Chips for a pinned entity that was deleted: kept as a local copy, or a placeholder. */
+function LocalChip({ pinned }: { pinned: { state: string; local?: true; deleted?: string } }) {
+  if (pinned.state === 'ready' && pinned.local) {
+    return (
+      <Chip
+        className="bg-stone-200 text-stone-800"
+        title="Deleted from the library; this workflow keeps a local copy"
+      >
+        <Archive className="size-3" />
+        local copy
+      </Chip>
+    );
+  }
+  if (pinned.state === 'missing') {
+    return <Chip className="bg-destructive/10 text-destructive">deleted</Chip>;
+  }
+  return null;
+}
+
+/** "Missing agent", or the placeholder's last known name. */
+function missingTitle(noun: string, pinned: { state: string; deleted?: string }): string {
+  return pinned.deleted ? `Deleted: ${pinned.deleted}` : `Missing ${noun}`;
+}
+
 /** The name of an agent at a pinned version, for slot defaults. */
 function useAgentName(ref: AgentRef | undefined): string | undefined {
   const pinned = usePinned('agent', ref?.id, ref?.version);
@@ -301,7 +327,7 @@ function AgentNodeView(props: NodeProps<FlowNode>) {
 
 function BoundAgentNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
-  const { overrides, settings, tools } = useCanvasContext();
+  const { overrides, settings, tools, repin } = useCanvasContext();
   const ref = n.type === 'agent' && n.binding.kind === 'agent' ? n.binding.agent : undefined;
   const pinned = usePinned('agent', ref?.id, ref?.version);
   if (n.type !== 'agent' || !ref) return null;
@@ -318,7 +344,10 @@ function BoundAgentNodeView({ id, data, selected }: NodeProps<FlowNode>) {
       id={id}
       type="agent"
       selected={selected}
-      title={n.label || (agent?.name ?? (pinned.state === 'missing' ? 'Missing agent' : ref.id))}
+      title={
+        n.label ||
+        (agent?.name ?? (pinned.state === 'missing' ? missingTitle('agent', pinned) : ref.id))
+      }
       subtitle={model ? modelLabel(model, settings?.models ?? []) : undefined}
       className={cn(pinned.state === 'missing' && 'border-destructive')}
       badges={
@@ -330,6 +359,17 @@ function BoundAgentNodeView({ id, data, selected }: NodeProps<FlowNode>) {
             </Chip>
           ) : (
             <Chip className="font-mono">{ref.version}</Chip>
+          )}
+          <LocalChip pinned={pinned} />
+          {!data.inner && (
+            <UpdateAvailable
+              kind="agent"
+              id={ref.id}
+              version={ref.version}
+              name={agent?.name ?? ref.id}
+              missing={pinned.state === 'missing'}
+              onUpdate={(to) => repin(`node/${id}`, to)}
+            />
           )}
           {override && Object.keys(override).length > 0 && <Chip>overrides</Chip>}
           {unrestricted && (
@@ -362,24 +402,43 @@ function ArtifactNodeView({ id, data, selected }: NodeProps<FlowNode>) {
 
 function ToolStepNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
-  const { tools } = useCanvasContext();
+  const { repin } = useCanvasContext();
+  const ref = n.type === 'toolStep' ? n.tool : undefined;
+  const pinned = usePinned('tool', ref?.id, ref?.version);
   if (n.type !== 'toolStep') return null;
-  const preset = tools?.find((t) => t.id === n.tool.id);
+  const preset = pinned.state === 'ready' ? pinned.entity : undefined;
   const args = Object.values(n.args).filter(Boolean).join(' ');
   return (
     <Card
       id={id}
       type="toolStep"
       selected={selected}
-      title={n.label || (preset?.name ?? n.tool.id)}
+      title={
+        n.label ||
+        (preset?.name ??
+          (pinned.state === 'missing' ? missingTitle('tool preset', pinned) : n.tool.id))
+      }
       subtitle={args ? <span className="font-mono">{args}</span> : 'Tool step'}
+      className={cn(pinned.state === 'missing' && 'border-destructive')}
       badges={
-        preset && (
-          <Chip>
-            <BuiltinIcon id={preset.builtin} className="size-3" />
-            {preset.builtin}
-          </Chip>
-        )
+        <>
+          {preset && (
+            <Chip>
+              <BuiltinIcon id={preset.builtin} className="size-3" />
+              {preset.builtin}
+            </Chip>
+          )}
+          <LocalChip pinned={pinned} />
+          {!data.inner && (
+            <UpdateAvailable
+              kind="tool"
+              id={n.tool.id}
+              version={n.tool.version}
+              name={preset?.name ?? n.tool.id}
+              onUpdate={(to) => repin(`node/${id}`, to)}
+            />
+          )}
+        </>
       }
     />
   );
@@ -451,6 +510,12 @@ function NoteNodeView({ id, data, selected }: NodeProps<FlowNode>) {
 function DecisionNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
   const { severity, join } = useNodeStatus(id);
+  const { repin } = useCanvasContext();
+  const evaluatorRef =
+    n.type === 'decision' && n.evaluator.type === 'agent' && n.evaluator.agent.kind === 'agent'
+      ? n.evaluator.agent.agent
+      : undefined;
+  const evaluatorName = useAgentName(evaluatorRef);
   if (n.type !== 'decision') return null;
   const evaluator =
     n.evaluator.type === 'deterministic'
@@ -482,6 +547,16 @@ function DecisionNodeView({ id, data, selected }: NodeProps<FlowNode>) {
             {n.label || 'Decision'}
           </span>
           <span className="mt-0.5 text-[10px] text-amber-800">{evaluator}</span>
+          {evaluatorRef && !data.inner && (
+            <UpdateAvailable
+              kind="agent"
+              id={evaluatorRef.id}
+              version={evaluatorRef.version}
+              name={evaluatorName ?? evaluatorRef.id}
+              className="mt-0.5"
+              onUpdate={(to) => repin(`node/${id}/evaluator`, to)}
+            />
+          )}
           {join !== undefined && (
             <span className="mt-0.5">
               <JoinChip id={id} />
@@ -539,7 +614,7 @@ function ExpandButton({ path, open }: { path: string; open: boolean }) {
 
 function PatternNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
-  const { kind, check, graph, loops } = useCanvasContext();
+  const { kind, check, graph, loops, repin } = useCanvasContext();
   const ref = n.type === 'pattern' ? n.pattern : undefined;
   const pinned = usePinned('pattern', ref?.id, ref?.version);
   const { severity } = useNodeStatus(id);
@@ -585,10 +660,22 @@ function PatternNodeView({ id, data, selected }: NodeProps<FlowNode>) {
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm leading-tight font-medium">
             {n.label ||
-              (pattern?.name ?? (pinned.state === 'missing' ? 'Missing pattern' : ref.id))}
+              (pattern?.name ??
+                (pinned.state === 'missing' ? missingTitle('pattern', pinned) : ref.id))}
           </div>
-          <div className="mt-0.5 truncate text-xs leading-tight text-muted-foreground">
+          <div className="mt-0.5 flex items-center gap-1 truncate text-xs leading-tight text-muted-foreground">
             {kind === 'pattern' && n.label && pattern ? pattern.name : 'Pattern'}
+            <LocalChip pinned={pinned} />
+            {!data.inner && (
+              <UpdateAvailable
+                kind="pattern"
+                id={ref.id}
+                version={ref.version}
+                name={pattern?.name ?? ref.id}
+                missing={pinned.state === 'missing'}
+                onUpdate={(to) => repin(`node/${id}`, to)}
+              />
+            )}
           </div>
         </div>
         {pattern && <ExpandButton path={id} open={false} />}
@@ -655,7 +742,7 @@ function PatternNodeView({ id, data, selected }: NodeProps<FlowNode>) {
         ) : (
           <Chip className="font-mono">{ref.version}</Chip>
         )}
-        {kind === 'project' && !data.inner && slots.length > 0 && (
+        {kind !== 'pattern' && !data.inner && slots.length > 0 && (
           <Chip
             className={cn(bound < slots.length && 'bg-destructive/10 text-destructive')}
             title={slots.map((s) => s.role).join(', ')}

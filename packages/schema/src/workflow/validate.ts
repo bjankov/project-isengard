@@ -4,7 +4,7 @@
  */
 import type { Agent } from '../agent.js';
 import { anyGlobCovers } from '../glob.js';
-import type { AgentRef, ToolRef } from '../ids.js';
+import type { AgentRef, Ref, ToolRef } from '../ids.js';
 import { isUnrestrictedShell, type ToolPreset } from '../tool.js';
 import { analyzeLoops, exitOf, joinInputs, traceOrigin, type LoopAnalysis } from './editing.js';
 import type { WorkflowGraph } from './graph.js';
@@ -20,6 +20,23 @@ export interface WorkflowResolver {
   tool(ref: ToolRef): ToolPreset | null | undefined;
   /** Pinned patterns. Without it, pattern instances are checked as opaque nodes. */
   pattern?: PatternLookup;
+  /** Placeholders of deleted entities (PLAN.md 8.4), for clearer messages about them. */
+  deleted?: (ref: Ref) => { name: string } | undefined;
+}
+
+/**
+ * How a missing reference is described: `agent “Planner” (v3) was deleted` for a placeholder,
+ * `agent planner-k3x9qa (v3) no longer exists` otherwise.
+ */
+export function missingRefText(
+  noun: string,
+  ref: Ref,
+  resolver: Pick<WorkflowResolver, 'deleted'> | undefined,
+): string {
+  const placeholder = resolver?.deleted?.(ref);
+  return placeholder
+    ? `${noun} “${placeholder.name}” (${ref.version}) was deleted. Replace it`
+    : `${noun} ${ref.id} (${ref.version}) no longer exists`;
 }
 
 export type ProblemRule =
@@ -390,7 +407,7 @@ export function validateWorkflow(
         add({
           rule: 'missing-ref',
           severity: 'error',
-          message: `${node.type === 'decision' ? `The evaluating agent of ${name(node.id)}` : `Agent ${ref.id}`} (${ref.version}) no longer exists.`,
+          message: `${missingRefText(node.type === 'decision' ? `The evaluating agent of ${name(node.id)}, agent` : 'Agent', ref, resolver)}.`,
           nodes: [node.id],
           edges: [],
         });
@@ -401,7 +418,7 @@ export function validateWorkflow(
             add({
               rule: 'missing-ref',
               severity: 'error',
-              message: `${agent.name} uses tool preset ${toolRef.id} (${toolRef.version}), which no longer exists.`,
+              message: `${agent.name} uses a tool preset that is gone: ${missingRefText('tool preset', toolRef, resolver)}.`,
               nodes: [node.id],
               edges: [],
             });
@@ -423,7 +440,7 @@ export function validateWorkflow(
         add({
           rule: 'missing-ref',
           severity: 'error',
-          message: `Tool preset ${node.tool.id} (${node.tool.version}) no longer exists.`,
+          message: `${missingRefText('Tool preset', node.tool, resolver)}.`,
           nodes: [node.id],
           edges: [],
         });

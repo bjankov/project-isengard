@@ -3,6 +3,7 @@
  * groups), slots, and a node's repeat group.
  */
 import {
+  KIND_PLURALS,
   analyzeLoops,
   forkBranchName,
   isBranchVersion,
@@ -11,7 +12,9 @@ import {
   patternPorts,
   portInputs,
   repeatCount,
+  repin,
   type AgentBinding,
+  type Project,
   type JoinMode,
   type RepeatGroup,
   type WorkflowNode,
@@ -40,6 +43,7 @@ import type { FieldErrors } from '@/lib/validation';
 import { useEntities, useVersions } from '@/stores/library';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { nodeTitle, updateNode, type CanvasKind, type Change, type WorkflowDoc } from './doc';
+import { UpdateAvailable } from '@/components/update-available';
 import { SlotBindingRow, UNBOUND } from './insert-pattern';
 import { usePatternTree } from './use-pattern-tree';
 import { EnumSelect, OptionalNumber } from './fields';
@@ -438,7 +442,7 @@ export function PatternInstanceFields({
       description: 'Save, then use “Edit fork” to change what is inside.',
     });
   };
-  const back = `/${kind === 'project' ? 'projects' : 'patterns'}/${entityId}`;
+  const back = `/${KIND_PLURALS[kind]}/${entityId}`;
 
   const loops = analyzeLoops(doc.workflow);
   const joinedPorts = pattern
@@ -456,7 +460,22 @@ export function PatternInstanceFields({
             <div className="truncate text-sm font-medium">
               {pattern?.name ?? (pattern === null ? 'Missing pattern' : node.pattern.id)}
             </div>
-            <div className="font-mono text-xs text-muted-foreground">{node.pattern.version}</div>
+            <div className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
+              {node.pattern.version}
+              <UpdateAvailable
+                kind="pattern"
+                id={node.pattern.id}
+                version={node.pattern.version}
+                name={pattern?.name ?? node.pattern.id}
+                missing={pattern === null}
+                onUpdate={(to) =>
+                  change(
+                    (d) =>
+                      repin('project', d as unknown as Project, `node/${node.id}`, to) as never,
+                  )
+                }
+              />
+            </div>
           </div>
           <Button variant="outline" size="sm" asChild>
             <Link to={`/patterns/${node.pattern.id}`}>
@@ -495,6 +514,7 @@ export function PatternInstanceFields({
                 branch={node.pattern.version}
                 name={libraryName ?? pattern?.name ?? node.pattern.id}
                 disabledReason={dirty ? 'Save first: promoting saves.' : undefined}
+                container={{ kind, id: entityId }}
                 onPromoted={(to) => pin(to.version, to.id, changeAndSave)}
               />
             </div>
@@ -507,7 +527,7 @@ export function PatternInstanceFields({
             onClick={() => setConfirmFork(true)}
           >
             <GitFork />
-            Customize for this {kind === 'project' ? 'project' : 'pattern'}
+            Customize for this {kind}
           </Button>
         )}
       </section>
@@ -581,7 +601,7 @@ export function PatternInstanceFields({
           />
         ))}
 
-      {kind === 'project' ? (
+      {kind !== 'pattern' ? (
         <Field
           label="Slots"
           hint="Who fills each role. Changing a binding never forks the pattern."
@@ -598,6 +618,27 @@ export function PatternInstanceFields({
                   <SlotBindingRow
                     key={slot.key}
                     slot={slot}
+                    extra={
+                      b?.kind === 'agent' && (
+                        <UpdateAvailable
+                          kind="agent"
+                          id={b.agent.id}
+                          version={b.agent.version}
+                          name={slot.role}
+                          onUpdate={(to) =>
+                            change(
+                              (d) =>
+                                repin(
+                                  'project',
+                                  d as unknown as Project,
+                                  `node/${node.id}/binding/${slot.key}`,
+                                  to,
+                                ) as never,
+                            )
+                          }
+                        />
+                      )
+                    }
                     compact
                     value={b?.kind === 'agent' ? b.agent.id : UNBOUND}
                     onChange={(id) => bind(slot.key, id)}
