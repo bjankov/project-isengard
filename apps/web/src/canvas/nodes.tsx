@@ -22,7 +22,9 @@ import {
 import {
   CircleAlert,
   GitFork as ForkIcon,
+  Maximize2,
   Merge,
+  Minimize2,
   Repeat2,
   ShieldAlert,
   TriangleAlert,
@@ -34,7 +36,13 @@ import { usePinned } from '@/stores/pinned';
 import { useCanvasContext } from './context';
 import { NODE_META } from './node-meta';
 
-export type FlowNodeData = { node: WorkflowNode };
+export type FlowNodeData = {
+  node: WorkflowNode;
+  /** Inside an expanded pattern frame: read-only, not part of the edited graph. */
+  inner?: boolean;
+  /** How far an expanded frame has opened (animation), 0..1. */
+  open?: number;
+};
 export type FlowNode = Node<FlowNodeData>;
 
 const handleClass =
@@ -507,6 +515,26 @@ function DecisionNodeView({ id, data, selected }: NodeProps<FlowNode>) {
  * A pattern instance, collapsed: its name and version, a handle per port (inputs left, outputs
  * right), and how many of its slots are bound.
  */
+/** Expand or collapse a pattern instance. */
+function ExpandButton({ path, open }: { path: string; open: boolean }) {
+  const { toggleExpanded } = useCanvasContext();
+  const Icon = open ? Minimize2 : Maximize2;
+  return (
+    <button
+      type="button"
+      className="nodrag flex size-6 shrink-0 items-center justify-center rounded-md text-violet-800 transition-colors hover:bg-violet-200/70"
+      aria-label={open ? 'Collapse pattern' : 'Expand pattern'}
+      title={open ? 'Collapse' : 'Expand to see inside'}
+      onClick={(e) => {
+        e.stopPropagation();
+        toggleExpanded(path);
+      }}
+    >
+      <Icon className="size-3.5" />
+    </button>
+  );
+}
+
 function PatternNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
   const { kind, check, graph, loops } = useCanvasContext();
@@ -515,7 +543,16 @@ function PatternNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const { severity } = useNodeStatus(id);
   if (n.type !== 'pattern' || !ref) return null;
   const pattern = pinned.state === 'ready' ? pinned.entity : undefined;
-  const ports = pattern ? patternPorts(pattern) : { inputs: [], outputs: [] };
+  // Until the pattern arrives, give the ports its edges use a handle, so they stay attached.
+  const used = (side: 'source' | 'target') =>
+    [
+      ...new Set(
+        graph.edges.flatMap((e) => (e[side].node === id && e[side].port ? [e[side].port] : [])),
+      ),
+    ].map((port) => ({ id: port, name: '…' }));
+  const ports = pattern
+    ? patternPorts(pattern)
+    : { inputs: used('target'), outputs: used('source') };
   const slots = pattern
     ? (listSlots(pattern, n.repeat, check.resolver.pattern ?? (() => undefined)) ?? [])
     : [];
@@ -552,6 +589,7 @@ function PatternNodeView({ id, data, selected }: NodeProps<FlowNode>) {
             {kind === 'pattern' && n.label && pattern ? pattern.name : 'Pattern'}
           </div>
         </div>
+        {pattern && <ExpandButton path={id} open={false} />}
       </div>
       <div className="relative grid grid-cols-2 gap-x-2 px-0 pb-2 text-[11px]">
         {Array.from({ length: rows }, (_, i) => {
@@ -615,7 +653,7 @@ function PatternNodeView({ id, data, selected }: NodeProps<FlowNode>) {
         ) : (
           <Chip className="font-mono">{ref.version}</Chip>
         )}
-        {kind === 'project' && slots.length > 0 && (
+        {kind === 'project' && !data.inner && slots.length > 0 && (
           <Chip
             className={cn(bound < slots.length && 'bg-destructive/10 text-destructive')}
             title={slots.map((s) => s.role).join(', ')}
@@ -625,6 +663,76 @@ function PatternNodeView({ id, data, selected }: NodeProps<FlowNode>) {
         )}
         <RepeatChip id={id} />
       </div>
+    </div>
+  );
+}
+
+/**
+ * An expanded pattern instance: a frame around its nodes (separate React Flow nodes inside
+ * it), with its ports as pills on the left and right edges.
+ */
+function PatternFrameView({ id, data, selected }: NodeProps<FlowNode>) {
+  const n = data.node;
+  const ref = n.type === 'pattern' ? n.pattern : undefined;
+  const pinned = usePinned('pattern', ref?.id, ref?.version);
+  const { severity } = useNodeStatus(id);
+  if (n.type !== 'pattern' || !ref) return null;
+  const pattern = pinned.state === 'ready' ? pinned.entity : undefined;
+  const forked = isBranchVersion(ref.version);
+  return (
+    <div
+      className={cn(
+        'relative h-full w-full rounded-2xl border-2 border-violet-300 bg-violet-50/40 shadow-sm',
+        selected && 'ring-2 ring-primary ring-offset-1',
+        severity && problemOutline[severity],
+        data.inner && 'bg-violet-100/40',
+      )}
+      data-node-type="pattern"
+      data-expanded="true"
+      data-problem={severity}
+    >
+      <ProblemMarker id={id} />
+      <div className="flex items-center gap-2 px-3 pt-2.5" style={{ opacity: data.open ?? 1 }}>
+        <span
+          className={cn(
+            'flex size-6 shrink-0 items-center justify-center rounded-md border',
+            NODE_META.pattern.accent,
+          )}
+        >
+          <NodeIcon type="pattern" />
+        </span>
+        <span className="truncate text-sm font-medium">{n.label || pattern?.name}</span>
+        {forked ? (
+          <Chip className="bg-violet-100 text-violet-800">
+            <ForkIcon className="size-3" />
+            modified
+          </Chip>
+        ) : (
+          <Chip className="font-mono">{ref.version}</Chip>
+        )}
+        <RepeatChip id={id} />
+        <span className="ml-auto" />
+        {!data.inner && <span className="text-[10px] text-muted-foreground">read-only inside</span>}
+        <ExpandButton path={id} open />
+      </div>
+    </div>
+  );
+}
+
+/** A pattern's Input or Output, drawn as a pill on the edge of its expanded frame. */
+function PortNodeView({ data }: NodeProps<FlowNode>) {
+  const n = data.node;
+  if (n.type !== 'input' && n.type !== 'output') return null;
+  return (
+    <div
+      className="flex h-8 w-28 items-center justify-center gap-1 rounded-full border-2 border-emerald-300 bg-emerald-50 px-2 text-[11px] font-medium text-emerald-900 shadow-xs"
+      data-node-type="port"
+      data-port-direction={n.type === 'input' ? 'in' : 'out'}
+    >
+      <Handle type="target" position={Position.Left} className={handleClass} />
+      <NodeIcon type={n.type} />
+      <span className="truncate">{n.name}</span>
+      <Handle type="source" position={Position.Right} className={handleClass} />
     </div>
   );
 }
@@ -653,4 +761,6 @@ export const nodeTypes: NodeTypes = {
   'wf-sharedStore': SharedStoreNodeView,
   'wf-note': NoteNodeView,
   'wf-pattern': PatternNodeView,
+  'wf-pattern-frame': PatternFrameView,
+  'wf-port': PortNodeView,
 };

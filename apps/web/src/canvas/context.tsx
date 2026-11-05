@@ -21,6 +21,9 @@ export interface CanvasContextValue {
   check: WorkflowCheck;
   settings: Settings | undefined;
   tools: ToolPreset[] | undefined;
+  /** Expanded pattern instances (paths), and expanding or collapsing one. */
+  expanded: ReadonlySet<string>;
+  toggleExpanded: (path: string) => void;
 }
 
 export const CanvasContext = createContext<CanvasContextValue | null>(null);

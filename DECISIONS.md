@@ -332,3 +332,14 @@ Format: date, milestone, decision, reason.
 - **Inside a pattern there is no binding step:** a nested instance's slots stay open (they are the outer pattern's slots). A pattern can't be inserted into itself (it isn't offered).
 - **The instance inspector** shows the pinned pattern (with Open), "How many" per repeat group, a binding per slot (changing it never forks), and a Join per input port with several inputs. Lowering N drops the bindings of copies that no longer exist.
 - **Joins of an instance are per input port** (`portJoins`): the node-level join rule skips pattern nodes, and a collapsed instance shows `join?` next to a port that needs one.
+
+### Expand and collapse
+- **Expanded state is per browser (`localStorage`), not in `layout.json`.** This changes the M0 decision. Stored in the layout, expanding would count as an unsaved change, and looking inside a built-in pattern would create a draft. Expanding is view state only (PLAN.md 7.7), so it is never saved. `Layout.expanded` stays in the schema, unused.
+- **An expanded instance is a frame** (a React Flow parent node) holding its pattern's nodes, laid out from the pattern's own `layout.json`: copies of repeated nodes stack downwards, and what was below them moves down. Slots show the bound agents (from the flattened graph). The internals are read-only: not draggable, selectable or connectable. Editing them is Customize (fork).
+- **Ports sit on the frame:** the pattern's Input and Output nodes are drawn as pills on the frame's left and right edges, and external edges attach to them, so they visibly route through the ports to the nodes inside.
+- **Nested instances expand one level at a time;** collapsing a frame also collapses what was expanded inside it.
+- **Room is made, not saved:** while a frame is open, top-level nodes to its right move right and nodes below it move down. Dragging such a node saves its real (unshifted) position.
+- **Animation runs in JavaScript** (`requestAnimationFrame`, about 260 ms, ease in-out), not CSS: the frame size, the room around it and the contents' opacity are interpolated, so edges stay attached while things move. Reduced-motion users get no animation.
+- **Expand or collapse** with the button in the instance's header, or by double-clicking it.
+- **Quick-add matches patterns by name only** and lists them after tool steps. Their descriptions are prose that fuzzily matched unrelated searches (found by an M3 browser test).
+- **A collapsed instance keeps handles for the ports its edges use** while its pattern is still loading, so edges don't detach (this caused a burst of React Flow warnings on every load).

@@ -6,7 +6,10 @@ import {
   createEdge,
   createNode,
   createPatternNode,
+  flattenWorkflow,
   patternPorts,
+  type PatternLookup,
+  type WorkflowEdge,
   type WorkflowNode,
   extractSubgraph,
   newLocalId,
@@ -60,6 +63,15 @@ import { Inspector, type Selection } from './inspector';
 import { flowNodeType, nodeTypes, type FlowNode } from './nodes';
 import { NODE_DRAG_TYPE, PATTERN_ITEM, Palette, QuickAdd, needsPick } from './palette';
 import { InsertPatternDialog, type PatternInsert } from './insert-pattern';
+import {
+  attach,
+  collapsedSize,
+  frameLayout,
+  lerpSize,
+  type ExpandContext,
+  type Size,
+} from './expand-layout';
+import { useExpanded } from './use-expanded';
 import { ContextPreview } from './context-preview';
 import { ProblemsPanel } from './problems-panel';
 import { SaveAsTemplateDialog } from './save-as-template';
@@ -210,63 +222,204 @@ export function WorkflowEditor({
 
   // ---- React Flow view of the document ----
 
-  const nodes: FlowNode[] = useMemo(
-    () =>
-      graph.nodes.map((n) => {
-        const pos = doc.layout.nodes[n.id] ?? { x: 0, y: 0 };
-        const base: FlowNode = {
-          id: n.id,
-          type: flowNodeType(n.type),
-          position: { x: pos.x, y: pos.y },
-          data: { node: n },
-          selected: selection.nodes.includes(n.id),
-          measured: measured[n.id],
-        };
-        if (n.type === 'note') {
-          return {
-            ...base,
-            width: pos.width ?? NOTE_SIZE.width,
-            height: pos.height ?? NOTE_SIZE.height,
-          };
-        }
-        return base;
-      }),
-    [graph, doc.layout.nodes, selection.nodes, measured],
-  );
+  // Expanded instances are view state per browser, never saved (DECISIONS.md, M5).
+  const {
+    expanded,
+    progress,
+    toggle: toggleExpanded,
+  } = useExpanded(`app.expanded.${kind}.${entityId || 'new'}`);
+  const lookup = useMemo<PatternLookup>(() => patterns ?? (() => undefined), [patterns]);
+  const bound = useMemo(() => {
+    const flat = flattenWorkflow(graph, lookup);
+    return new Map(flat.graph.nodes.map((n) => [n.id, n]));
+  }, [graph, lookup]);
 
-  const edges: FlowEdge[] = useMemo(
-    () =>
-      graph.edges.map((e) => {
-        const from = graph.nodes.find((n) => n.id === e.source.node);
-        const exit =
-          from?.type === 'decision' ? from.exits.find((x) => x.id === e.source.port) : undefined;
-        const back = loops.backEdges.has(e.id);
-        const problem = check.edges.get(e.id);
-        return {
-          id: e.id,
-          type: 'workflow',
-          source: e.source.node,
-          sourceHandle: e.source.port ?? null,
-          target: e.target.node,
-          targetHandle: e.target.port ?? null,
-          selected: selection.edges.includes(e.id),
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            width: 16,
-            height: 16,
-            color: problem === 'error' ? '#dc2626' : back ? '#f59e0b' : '#94a3b8',
-          },
-          data: {
-            edge: e,
-            back,
-            cap: loops.capEdges.has(e.id) ? exit?.maxIterations : undefined,
-            uncapped: check.uncappedEdges.has(e.id),
-            problem,
-          },
-        };
-      }),
-    [graph, loops, check, selection.edges],
-  );
+  const view = useMemo(() => {
+    const ctx: ExpandContext = { lookup, expanded, bound, progress };
+    const flowNodes: FlowNode[] = [];
+    const innerEdges: FlowEdge[] = [];
+    /** Expanded frames actually drawn (their pattern is loaded). */
+    const drawn = new Set<string>();
+    /** How far each top-level node is moved to make room for expanded frames. */
+    const shift: Record<string, { x: number; y: number }> = {};
+
+    const edgeOf = (
+      id: string,
+      edge: WorkflowEdge,
+      source: { node: string; handle?: string },
+      target: { node: string; handle?: string },
+      extra: Partial<FlowEdge['data']> & { opacity?: number; inner?: boolean },
+    ): FlowEdge => {
+      const problem = check.edges.get(id);
+      const back = extra.back ?? false;
+      return {
+        id,
+        type: 'workflow',
+        source: source.node,
+        sourceHandle: source.handle ?? null,
+        target: target.node,
+        targetHandle: target.handle ?? null,
+        selected: selection.edges.includes(id),
+        ...(extra.inner ? { selectable: false, focusable: false, zIndex: 1 } : {}),
+        ...(extra.opacity !== undefined && extra.opacity < 1
+          ? { style: { opacity: extra.opacity } }
+          : {}),
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 16,
+          height: 16,
+          color: problem === 'error' ? '#dc2626' : back ? '#f59e0b' : '#94a3b8',
+        },
+        data: {
+          edge,
+          back,
+          cap: extra.cap,
+          uncapped: extra.uncapped ?? false,
+          problem,
+        },
+      };
+    };
+
+    /** The children of an expanded frame (recursively), faded in by `opacity`. */
+    const addFrame = (
+      path: string,
+      instance: Extract<WorkflowNode, { type: 'pattern' }>,
+      opacity: number,
+    ) => {
+      const layout = frameLayout(path, instance, ctx);
+      if (!layout) return;
+      drawn.add(path);
+      for (const inner of layout.nodes) {
+        const open = inner.frame ? (progress.get(inner.id) ?? 1) : undefined;
+        flowNodes.push({
+          id: inner.id,
+          type: inner.port
+            ? 'wf-port'
+            : inner.frame
+              ? 'wf-pattern-frame'
+              : flowNodeType(inner.node.type),
+          parentId: inner.parent,
+          position: inner.position,
+          data: { node: inner.node, inner: true, ...(open !== undefined ? { open } : {}) },
+          draggable: false,
+          selectable: false,
+          connectable: false,
+          measured: measured[inner.id],
+          ...(inner.frame ? { width: inner.frame.width, height: inner.frame.height } : {}),
+          style: { opacity },
+        });
+        if (inner.frame && inner.node.type === 'pattern') {
+          addFrame(inner.id, inner.node, opacity * (open ?? 1));
+        }
+      }
+      for (const e of layout.edges) {
+        innerEdges.push(
+          edgeOf(e.id, e.edge, e.source, e.target, {
+            back: e.back,
+            cap: e.cap,
+            opacity,
+            inner: true,
+          }),
+        );
+      }
+    };
+
+    // Top level: frames for expanded instances, and room around them.
+    const frames: { id: string; at: { x: number; y: number }; closed: Size; open: Size }[] = [];
+    for (const n of graph.nodes) {
+      if (n.type !== 'pattern' || !expanded.has(n.id)) continue;
+      const layout = frameLayout(n.id, n, ctx);
+      const pattern = lookup(n.pattern);
+      if (!layout || !pattern) continue;
+      // Not the measured size: once expanded, the frame (same id) is what gets measured.
+      const closed = collapsedSize(pattern);
+      const t = progress.get(n.id) ?? 1;
+      frames.push({
+        id: n.id,
+        at: doc.layout.nodes[n.id] ?? { x: 0, y: 0 },
+        closed,
+        open: lerpSize(closed, layout.size, t),
+      });
+    }
+    for (const n of graph.nodes) {
+      const p = doc.layout.nodes[n.id] ?? { x: 0, y: 0 };
+      let dx = 0;
+      let dy = 0;
+      for (const f of frames) {
+        if (f.id === n.id) continue;
+        const extraX = Math.max(0, f.open.width - f.closed.width);
+        const extraY = Math.max(0, f.open.height - f.closed.height);
+        if (p.x > f.at.x + f.closed.width / 2) dx += extraX;
+        else if (p.y > f.at.y + f.closed.height / 2) dy += extraY;
+      }
+      if (dx || dy) shift[n.id] = { x: dx, y: dy };
+    }
+
+    for (const n of graph.nodes) {
+      const pos = doc.layout.nodes[n.id] ?? { x: 0, y: 0 };
+      const s = shift[n.id];
+      const position = s ? { x: pos.x + s.x, y: pos.y + s.y } : { x: pos.x, y: pos.y };
+      const frame = frames.find((f) => f.id === n.id);
+      if (frame && n.type === 'pattern') {
+        const open = progress.get(n.id) ?? 1;
+        flowNodes.push({
+          id: n.id,
+          type: 'wf-pattern-frame',
+          position,
+          data: { node: n, open },
+          selected: selection.nodes.includes(n.id),
+          width: frame.open.width,
+          height: frame.open.height,
+          measured: measured[n.id],
+        });
+        addFrame(n.id, n, open);
+        continue;
+      }
+      const base: FlowNode = {
+        id: n.id,
+        type: flowNodeType(n.type),
+        position,
+        data: { node: n },
+        selected: selection.nodes.includes(n.id),
+        measured: measured[n.id],
+      };
+      flowNodes.push(
+        n.type === 'note'
+          ? { ...base, width: pos.width ?? NOTE_SIZE.width, height: pos.height ?? NOTE_SIZE.height }
+          : base,
+      );
+    }
+
+    const edges: FlowEdge[] = graph.edges.map((e) => {
+      const from = graph.nodes.find((n) => n.id === e.source.node);
+      const exit =
+        from?.type === 'decision' ? from.exits.find((x) => x.id === e.source.port) : undefined;
+      const toPort = (end: EdgeEndpoint) => attach('', end, graph, drawn);
+      return edgeOf(e.id, e, toPort(e.source), toPort(e.target), {
+        back: loops.backEdges.has(e.id),
+        cap: loops.capEdges.has(e.id) ? exit?.maxIterations : undefined,
+        uncapped: check.uncappedEdges.has(e.id),
+        ...(drawn.has(e.source.node) || drawn.has(e.target.node) ? { inner: false } : {}),
+      });
+    });
+
+    return { nodes: flowNodes, edges: [...edges, ...innerEdges], shift };
+  }, [
+    graph,
+    doc.layout.nodes,
+    selection,
+    measured,
+    expanded,
+    progress,
+    lookup,
+    bound,
+    loops,
+    check,
+  ]);
+
+  const nodes = view.nodes;
+  const edges = view.edges;
+  const shift = view.shift;
 
   const onNodesChange = useCallback(
     (changes: NodeChange<FlowNode>[]) => {
@@ -275,8 +428,11 @@ export function WorkflowEditor({
       const measures: Record<string, { width: number; height: number }> = {};
       let nextSelected: Set<string> | undefined;
       for (const c of changes) {
-        if (c.type === 'position' && c.position) positions[c.id] = c.position;
-        else if (c.type === 'dimensions' && c.dimensions) {
+        if (c.type === 'position' && c.position) {
+          // Nodes moved aside for an expanded frame are saved where they really are.
+          const s = shift[c.id];
+          positions[c.id] = s ? { x: c.position.x - s.x, y: c.position.y - s.y } : c.position;
+        } else if (c.type === 'dimensions' && c.dimensions) {
           measures[c.id] = c.dimensions;
           if (c.setAttributes) sizes[c.id] = c.dimensions;
         } else if (c.type === 'select') {
@@ -309,7 +465,7 @@ export function WorkflowEditor({
         );
       }
     },
-    [change, selection.nodes],
+    [change, selection.nodes, shift],
   );
 
   const onEdgesChange = useCallback(
@@ -663,8 +819,21 @@ export function WorkflowEditor({
       check,
       settings,
       tools,
+      expanded,
+      toggleExpanded,
     }),
-    [kind, graph, doc.overrides, doc.repeat, loops, check, settings, tools],
+    [
+      kind,
+      graph,
+      doc.overrides,
+      doc.repeat,
+      loops,
+      check,
+      settings,
+      tools,
+      expanded,
+      toggleExpanded,
+    ],
   );
 
   const shortcut = (k: string) => `${isMac ? '⌘' : 'Ctrl+'}${k}`;
@@ -758,6 +927,9 @@ export function WorkflowEditor({
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
                 onConnectEnd={onConnectEnd}
+                onNodeDoubleClick={(_, n) => {
+                  if (n.data.node.type === 'pattern' && !n.data.inner) toggleExpanded(n.id);
+                }}
                 isValidConnection={isValidConnection}
                 deleteKeyCode={null}
                 selectionKeyCode="Shift"

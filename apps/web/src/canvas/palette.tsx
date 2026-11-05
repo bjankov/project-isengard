@@ -247,29 +247,6 @@ export function QuickAdd({
             )}
           </CommandGroup>
         )}
-        {!only && (
-          <CommandGroup heading="Patterns">
-            {(patterns ?? [])
-              .filter((p) => p.id !== selfId)
-              .map((p) => {
-                const Icon = NODE_META.pattern.icon;
-                return (
-                  <CommandItem
-                    key={p.id}
-                    value={`pattern ${p.name} ${p.description}`}
-                    onSelect={() => {
-                      onOpenChange(false);
-                      onAddPattern(p.id);
-                    }}
-                  >
-                    <Icon />
-                    <span>{p.name}</span>
-                    <span className="ml-auto truncate text-xs text-muted-foreground">pattern</span>
-                  </CommandItem>
-                );
-              })}
-          </CommandGroup>
-        )}
         {only !== 'agent' && (
           <CommandGroup heading="Tool steps">
             {(tools ?? []).map((t) => (
@@ -292,6 +269,30 @@ export function QuickAdd({
                 No tool presets yet. Create one in the Tools tab.
               </div>
             )}
+          </CommandGroup>
+        )}
+        {!only && (
+          <CommandGroup heading="Patterns">
+            {(patterns ?? [])
+              .filter((p) => p.id !== selfId)
+              .map((p) => {
+                const Icon = NODE_META.pattern.icon;
+                return (
+                  <CommandItem
+                    key={p.id}
+                    // Name only: descriptions are prose and match almost any search.
+                    value={`pattern ${p.name}`}
+                    onSelect={() => {
+                      onOpenChange(false);
+                      onAddPattern(p.id);
+                    }}
+                  >
+                    <Icon />
+                    <span>{p.name}</span>
+                    <span className="ml-auto truncate text-xs text-muted-foreground">pattern</span>
+                  </CommandItem>
+                );
+              })}
           </CommandGroup>
         )}
       </CommandList>
