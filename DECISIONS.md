@@ -324,3 +324,11 @@ Format: date, milestone, decision, reason.
 - **On the canvas:** Input and Output nodes of a pattern carry a `port` chip, repeated nodes a `×2 Workers` chip, slots a dashed outline and a `slot` chip. Pattern instances (e.g. the Team inside Hierarchy) render collapsed, with a handle per port, their version (or `modified`) and, in a project, how many slots are bound. Inserting, binding and expanding them is the next step.
 - **Patterns tab:** cards like Projects (name, `built-in` badge, version, draft badge, the roles and port counts). **New pattern** asks for a name and description and starts with Input → one slot → Output. The canvas is at `/patterns/:id`; `?branch=` opens a fork.
 - The placeholder page is gone: Patterns was the last tab using it.
+
+### Inserting patterns
+- **Insert:** the palette's **Pattern…** entry (click or drag) and a **Patterns** group in quick-add. A dialog picks the pattern (skipped from quick-add), chooses N per repeat group (clamped to its range), and binds each slot to an agent, pre-selected from the slot's default. Inserting with unbound slots is allowed: the instance shows `0/2 slots bound` and merging is blocked until they are bound.
+- **New instances pin the pattern's current version, and bindings pin the agent's current version** (the M2 rule for new references).
+- **Placement follows the other nodes:** after the selected node, connected from its first free exit or output port into the instance's first input port.
+- **Inside a pattern there is no binding step:** a nested instance's slots stay open (they are the outer pattern's slots). A pattern can't be inserted into itself (it isn't offered).
+- **The instance inspector** shows the pinned pattern (with Open), "How many" per repeat group, a binding per slot (changing it never forks), and a Join per input port with several inputs. Lowering N drops the bindings of copies that no longer exist.
+- **Joins of an instance are per input port** (`portJoins`): the node-level join rule skips pattern nodes, and a collapsed instance shows `join?` next to a port that needs one.

@@ -5,6 +5,9 @@ import {
   cloneSubgraph,
   createEdge,
   createNode,
+  createPatternNode,
+  patternPorts,
+  type WorkflowNode,
   extractSubgraph,
   newLocalId,
   type AgentOverride,
@@ -55,7 +58,8 @@ import {
 import { edgeTypes, type FlowEdge } from './edges';
 import { Inspector, type Selection } from './inspector';
 import { flowNodeType, nodeTypes, type FlowNode } from './nodes';
-import { NODE_DRAG_TYPE, Palette, QuickAdd, needsPick } from './palette';
+import { NODE_DRAG_TYPE, PATTERN_ITEM, Palette, QuickAdd, needsPick } from './palette';
+import { InsertPatternDialog, type PatternInsert } from './insert-pattern';
 import { ContextPreview } from './context-preview';
 import { ProblemsPanel } from './problems-panel';
 import { SaveAsTemplateDialog } from './save-as-template';
@@ -441,13 +445,13 @@ export function WorkflowEditor({
       : undefined;
   const agentNames = Object.fromEntries((useEntities('agent') ?? []).map((a) => [a.id, a.name]));
 
-  const addNode = useCallback(
-    (type: CanvasNodeType, needs?: NodeNeeds, at?: { x: number; y: number }) => {
-      const id = newLocalId(
-        ID_PREFIX[type],
-        graph.nodes.map((n) => n.id),
-      );
-      const node = createNode(type, id, needs);
+  /**
+   * Put a new node on the canvas: at `at`, or after the selected node (connected from it, into
+   * `inPort` for a pattern instance), or in the middle of the view; never on top of another.
+   */
+  const placeNode = useCallback(
+    (node: WorkflowNode, at?: { x: number; y: number }, inPort?: string) => {
+      const { id, type } = node;
       const positions = doc.layout.nodes;
       let pos = at;
       let edgeFrom: EdgeEndpoint | undefined;
@@ -455,16 +459,16 @@ export function WorkflowEditor({
         const p = positions[after.id] ?? { x: 0, y: 0 };
         const width = measured[after.id]?.width ?? DEFAULT_SIZE.width;
         pos = { x: p.x + width + 96, y: p.y };
-        const port =
-          after.type === 'decision'
-            ? (
-                after.exits.find(
-                  (x) =>
-                    !graph.edges.some((e) => e.source.node === after.id && e.source.port === x.id),
-                ) ?? after.exits[0]
-              )?.id
-            : undefined;
-        edgeFrom = port ? { node: after.id, port } : { node: after.id };
+        const free = (port: string) =>
+          !graph.edges.some((e) => e.source.node === after.id && e.source.port === port);
+        const outPorts = (() => {
+          if (after.type === 'decision') return after.exits.map((x) => x.id);
+          if (after.type !== 'pattern') return undefined;
+          const pattern = patterns?.(after.pattern);
+          return pattern ? patternPorts(pattern).outputs.map((o) => o.id) : [];
+        })();
+        const port = outPorts && (outPorts.find(free) ?? outPorts[0]);
+        edgeFrom = outPorts ? (port ? { node: after.id, port } : undefined) : { node: after.id };
       }
       const start = pos ?? viewportCenter();
       const position = { x: snap(start.x), y: snap(start.y) };
@@ -482,10 +486,11 @@ export function WorkflowEditor({
           );
         });
       while (overlaps(position.x, position.y)) position.y += size.height + 2 * GRID;
+      const target: EdgeEndpoint = inPort ? { node: id, port: inPort } : { node: id };
       change((d) => {
         const g = { ...d.workflow, nodes: [...d.workflow.nodes, node] };
         let edges = g.edges;
-        if (edgeFrom && canConnect(g, edgeFrom, { node: id }).ok) {
+        if (edgeFrom && canConnect(g, edgeFrom, target, patterns).ok) {
           edges = [
             ...edges,
             createEdge(
@@ -495,7 +500,8 @@ export function WorkflowEditor({
                 edges.map((e) => e.id),
               ),
               edgeFrom,
-              { node: id },
+              target,
+              patterns,
             ),
           ];
         }
@@ -508,7 +514,36 @@ export function WorkflowEditor({
       setSelection({ nodes: [id], edges: [] });
       revealLater(position, size);
     },
-    [graph, doc.layout.nodes, after, measured, viewportCenter, change, revealLater],
+    [graph, doc.layout.nodes, after, measured, viewportCenter, change, revealLater, patterns],
+  );
+
+  const addNode = useCallback(
+    (type: CanvasNodeType, needs?: NodeNeeds, at?: { x: number; y: number }) => {
+      const id = newLocalId(
+        ID_PREFIX[type],
+        graph.nodes.map((n) => n.id),
+      );
+      placeNode(createNode(type, id, needs), at);
+    },
+    [graph, placeNode],
+  );
+
+  const [inserting, setInserting] = useState<{
+    patternId?: string;
+    at?: { x: number; y: number };
+  } | null>(null);
+
+  const insertPattern = useCallback(
+    (insert: PatternInsert, at?: { x: number; y: number }) => {
+      const id = newLocalId(
+        'pattern',
+        graph.nodes.map((n) => n.id),
+      );
+      const pattern = patterns?.(insert.pattern);
+      const firstIn = pattern ? patternPorts(pattern).inputs[0]?.id : undefined;
+      placeNode(createPatternNode(id, insert.pattern, insert.bindings, insert.repeat), at, firstIn);
+    },
+    [graph, placeNode, patterns],
   );
 
   const pick = useCallback(
@@ -523,11 +558,13 @@ export function WorkflowEditor({
   );
 
   const onDrop = (e: React.DragEvent) => {
-    const type = e.dataTransfer.getData(NODE_DRAG_TYPE) as CanvasNodeType;
+    const type = e.dataTransfer.getData(NODE_DRAG_TYPE) as CanvasNodeType | typeof PATTERN_ITEM;
     if (!type) return;
     e.preventDefault();
     const p = flow.screenToFlowPosition({ x: e.clientX, y: e.clientY });
-    pick(type, { x: p.x - DEFAULT_SIZE.width / 2, y: p.y - DEFAULT_SIZE.height / 2 });
+    const at = { x: p.x - DEFAULT_SIZE.width / 2, y: p.y - DEFAULT_SIZE.height / 2 };
+    if (type === PATTERN_ITEM) setInserting({ at });
+    else pick(type, at);
   };
 
   // ---- Delete, copy, paste, undo ----
@@ -697,7 +734,7 @@ export function WorkflowEditor({
         }
       />
       <div className="flex min-h-0 flex-1">
-        <Palette kind={kind} onPick={(type) => pick(type)} />
+        <Palette kind={kind} onPick={(type) => pick(type)} onPickPattern={() => setInserting({})} />
         <div className="flex min-w-0 flex-1 flex-col">
           <div
             ref={wrapper}
@@ -775,6 +812,16 @@ export function WorkflowEditor({
         only={quickAdd?.only}
         afterLabel={!quickAdd?.at && after ? nodeTitle(after, agentNames) : undefined}
         onAdd={(type, needs) => addNode(type, needs, quickAdd?.at)}
+        onAddPattern={(patternId) => setInserting({ patternId })}
+        selfId={isPattern ? entityId : undefined}
+      />
+      <InsertPatternDialog
+        kind={kind}
+        open={inserting !== null}
+        onOpenChange={(open) => !open && setInserting(null)}
+        initialPatternId={inserting?.patternId}
+        selfId={isPattern ? entityId : undefined}
+        onInsert={(insert) => insertPattern(insert, inserting?.at)}
       />
       {!isPattern && (
         <>

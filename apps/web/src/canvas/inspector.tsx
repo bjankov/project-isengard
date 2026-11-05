@@ -40,7 +40,7 @@ import {
   type WorkflowDoc,
 } from './doc';
 import {
-  PatternInstanceSummary,
+  PatternInstanceFields,
   PatternPanelFields,
   RepeatField,
   SlotFields,
@@ -327,6 +327,9 @@ function NodePanel(props: InspectorProps & { node: WorkflowNode }) {
   const set = (fn: (n: WorkflowNode) => WorkflowNode, key: string) =>
     change((d) => updateNode(d, node.id, fn), `node:${node.id}:${key}`);
   const agentNames = Object.fromEntries((useEntities('agent') ?? []).map((a) => [a.id, a.name]));
+  const patternNames = Object.fromEntries(
+    (useEntities('pattern') ?? []).map((p) => [p.id, p.name]),
+  );
   const inputs = joinInputs(doc.workflow, node.id).length;
 
   return (
@@ -339,7 +342,7 @@ function NodePanel(props: InspectorProps & { node: WorkflowNode }) {
             <Icon className="size-4" />
           </span>
         }
-        title={nodeTitle(node, agentNames)}
+        title={nodeTitle(node, agentNames, patternNames)}
         subtitle={
           node.type === 'agent' && node.binding.kind === 'slot'
             ? 'Slot'
@@ -453,7 +456,9 @@ function NodePanel(props: InspectorProps & { node: WorkflowNode }) {
           />
         )}
 
-        {node.type === 'pattern' && <PatternInstanceSummary node={node} />}
+        {node.type === 'pattern' && (
+          <PatternInstanceFields node={node} doc={doc} change={change} kind={kind} />
+        )}
 
         {node.type === 'agent' && node.binding.kind === 'agent' && (
           <AgentInspector

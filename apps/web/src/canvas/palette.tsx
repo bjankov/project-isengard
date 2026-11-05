@@ -21,6 +21,9 @@ import { NODE_META } from './node-meta';
 
 export const NODE_DRAG_TYPE = 'application/x-workflow-node';
 
+/** Drag payload of the palette's Pattern entry (it opens the insert dialog). */
+export const PATTERN_ITEM = 'pattern';
+
 /**
  * Whether a node type needs a library entity picked first. In a pattern, agent nodes are
  * slots: they start empty (an agent can be picked as the slot's default in quick-add).
@@ -52,10 +55,13 @@ export function nodeTypeInfo(kind: CanvasKind, type: CanvasNodeType) {
 export function Palette({
   kind,
   onPick,
+  onPickPattern,
 }: {
   kind: CanvasKind;
   onPick: (type: CanvasNodeType) => void;
+  onPickPattern: () => void;
 }) {
+  const PatternIcon = NODE_META.pattern.icon;
   return (
     <aside className="flex w-48 shrink-0 flex-col border-r bg-muted/30" aria-label="Node palette">
       <div className="px-3 pt-3 pb-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
@@ -91,6 +97,29 @@ export function Palette({
             </li>
           );
         })}
+        <li>
+          <button
+            type="button"
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData(NODE_DRAG_TYPE, PATTERN_ITEM);
+              e.dataTransfer.effectAllowed = 'move';
+            }}
+            onClick={onPickPattern}
+            title={NODE_TYPE_INFO.pattern.description}
+            className="flex w-full cursor-grab items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent active:cursor-grabbing"
+          >
+            <span
+              className={cn(
+                'flex size-6 shrink-0 items-center justify-center rounded border',
+                NODE_META.pattern.accent,
+              )}
+            >
+              <PatternIcon className="size-3.5" />
+            </span>
+            Pattern…
+          </button>
+        </li>
       </ul>
       <p className="border-t p-3 text-xs text-muted-foreground">
         Drag onto the canvas, or press <Kbd>Ctrl K</Kbd>. With one node selected, new nodes are
@@ -108,8 +137,14 @@ export function QuickAdd({
   only,
   afterLabel,
   onAdd,
+  onAddPattern,
+  selfId,
 }: {
   kind: CanvasKind;
+  /** Insert a pattern (opens the binding dialog). */
+  onAddPattern: (patternId: string) => void;
+  /** The pattern being edited, which can't be inserted into itself. */
+  selfId?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Restrict to agents or tool presets (after picking that node type). */
@@ -120,6 +155,7 @@ export function QuickAdd({
 }) {
   const agents = useEntities('agent');
   const tools = useEntities('tool');
+  const patterns = useEntities('pattern');
   const agentVersions = useVersions('agent');
   const toolVersions = useVersions('tool');
   const add = (type: CanvasNodeType, needs?: NodeNeeds) => {
@@ -140,7 +176,7 @@ export function QuickAdd({
             ? 'Which agent?'
             : only === 'tool'
               ? 'Which tool preset?'
-              : 'Add a node, an agent or a tool step…'
+              : 'Add a node, an agent, a pattern or a tool step…'
         }
       />
       {afterLabel && !only && (
@@ -209,6 +245,29 @@ export function QuickAdd({
                 No agents yet. Create one in the Agents tab.
               </div>
             )}
+          </CommandGroup>
+        )}
+        {!only && (
+          <CommandGroup heading="Patterns">
+            {(patterns ?? [])
+              .filter((p) => p.id !== selfId)
+              .map((p) => {
+                const Icon = NODE_META.pattern.icon;
+                return (
+                  <CommandItem
+                    key={p.id}
+                    value={`pattern ${p.name} ${p.description}`}
+                    onSelect={() => {
+                      onOpenChange(false);
+                      onAddPattern(p.id);
+                    }}
+                  >
+                    <Icon />
+                    <span>{p.name}</span>
+                    <span className="ml-auto truncate text-xs text-muted-foreground">pattern</span>
+                  </CommandItem>
+                );
+              })}
           </CommandGroup>
         )}
         {only !== 'agent' && (

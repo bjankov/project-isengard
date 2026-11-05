@@ -399,10 +399,29 @@ export function joinInputs(
   loops: LoopAnalysis = analyzeLoops(graph),
 ): WorkflowEdge[] {
   const node = graph.nodes.find((n) => n.id === nodeId);
-  if (!node || node.type === 'sharedStore' || node.type === 'note') return [];
+  // Pattern instances join per input port (`portInputs`), shared stores never join.
+  if (!node || node.type === 'sharedStore' || node.type === 'note' || node.type === 'pattern')
+    return [];
   const stores = new Set(graph.nodes.filter((n) => n.type === 'sharedStore').map((n) => n.id));
   return graph.edges.filter(
     (e) => e.target.node === nodeId && !loops.backEdges.has(e.id) && !stores.has(e.source.node),
+  );
+}
+
+/** The incoming edges of one input port of a pattern instance that count for its join. */
+export function portInputs(
+  graph: WorkflowGraph,
+  nodeId: string,
+  port: string,
+  loops: LoopAnalysis = analyzeLoops(graph),
+): WorkflowEdge[] {
+  const stores = new Set(graph.nodes.filter((n) => n.type === 'sharedStore').map((n) => n.id));
+  return graph.edges.filter(
+    (e) =>
+      e.target.node === nodeId &&
+      e.target.port === port &&
+      !loops.backEdges.has(e.id) &&
+      !stores.has(e.source.node),
   );
 }
 

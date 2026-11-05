@@ -96,7 +96,11 @@ export function removeItems(
 }
 
 /** Display name of a node for lists and edge descriptions. */
-export function nodeTitle(node: WorkflowNode, agentNames: Record<string, string> = {}): string {
+export function nodeTitle(
+  node: WorkflowNode,
+  agentNames: Record<string, string> = {},
+  patternNames: Record<string, string> = {},
+): string {
   if (node.label) return node.label;
   switch (node.type) {
     case 'input':
@@ -116,7 +120,7 @@ export function nodeTitle(node: WorkflowNode, agentNames: Record<string, string>
     case 'humanInput':
       return 'Human input';
     case 'pattern':
-      return 'Pattern';
+      return patternNames[node.pattern.id] ?? 'Pattern';
     case 'note':
       return 'Note';
   }

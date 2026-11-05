@@ -5,6 +5,7 @@ import {
   joinLabel,
   listSlots,
   patternPorts,
+  portInputs,
   repeatCount,
   type AgentRef,
   type WorkflowNode,
@@ -508,7 +509,7 @@ function DecisionNodeView({ id, data, selected }: NodeProps<FlowNode>) {
  */
 function PatternNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
-  const { kind, check } = useCanvasContext();
+  const { kind, check, graph, loops } = useCanvasContext();
   const ref = n.type === 'pattern' ? n.pattern : undefined;
   const pinned = usePinned('pattern', ref?.id, ref?.version);
   const { severity } = useNodeStatus(id);
@@ -570,6 +571,19 @@ function PatternNodeView({ id, data, selected }: NodeProps<FlowNode>) {
                     <span className="truncate" data-port={input.id}>
                       {input.name}
                     </span>
+                    {portInputs(graph, id, input.id, loops).length > 1 && (
+                      <span
+                        className={cn(
+                          'ml-1 shrink-0 rounded px-1 text-[10px]',
+                          n.portJoins[input.id]
+                            ? 'bg-muted text-muted-foreground'
+                            : 'bg-destructive/10 text-destructive',
+                        )}
+                        title="Several inputs arrive at this port"
+                      >
+                        {n.portJoins[input.id]?.mode ?? 'join?'}
+                      </span>
+                    )}
                   </>
                 )}
               </div>

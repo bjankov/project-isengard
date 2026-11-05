@@ -2,7 +2,19 @@
  * Inspector parts that only exist in the pattern editor: the pattern itself (with its repeat
  * groups), slots, and a node's repeat group.
  */
-import { newLocalId, type AgentBinding, type RepeatGroup, type WorkflowNode } from '@app/schema';
+import {
+  analyzeLoops,
+  listSlots,
+  newLocalId,
+  patternPorts,
+  portInputs,
+  repeatCount,
+  type AgentBinding,
+  type JoinMode,
+  type RepeatGroup,
+  type WorkflowNode,
+} from '@app/schema';
+import { useMemo } from 'react';
 import { ExternalLink, Plus, Repeat2, Trash2 } from 'lucide-react';
 import { Link } from 'react-router';
 import { Field } from '@/components/field';
@@ -11,8 +23,10 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import type { FieldErrors } from '@/lib/validation';
 import { useEntities, useVersions } from '@/stores/library';
-import { usePinned } from '@/stores/pinned';
-import { nodeTitle, type Change, type WorkflowDoc } from './doc';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { nodeTitle, updateNode, type CanvasKind, type Change, type WorkflowDoc } from './doc';
+import { SlotBindingRow, UNBOUND } from './insert-pattern';
+import { usePatternTree } from './use-pattern-tree';
 import { EnumSelect, OptionalNumber } from './fields';
 
 type SlotBinding = Extract<AgentBinding, { kind: 'slot' }>;
@@ -316,33 +330,209 @@ export function PatternPanelFields({
   );
 }
 
-/** A pattern instance: which pattern and version it pins, with a link to open it. */
-export function PatternInstanceSummary({
+/** A pattern instance: what it pins, how many copies, its slot bindings and port joins. */
+export function PatternInstanceFields({
   node,
+  doc,
+  change,
+  kind,
 }: {
   node: Extract<WorkflowNode, { type: 'pattern' }>;
+  doc: WorkflowDoc;
+  change: Change;
+  kind: CanvasKind;
 }) {
-  const pinned = usePinned('pattern', node.pattern.id, node.pattern.version);
-  const pattern = pinned.state === 'ready' ? pinned.entity : undefined;
+  const roots = useMemo(() => [node.pattern], [node.pattern]);
+  const tree = usePatternTree(roots);
+  const agentVersions = useVersions('agent');
+  const pattern = tree.lookup(node.pattern);
+  const slots = pattern && tree.ready ? listSlots(pattern, node.repeat, tree.lookup) : undefined;
+  const set = (fn: (n: typeof node) => typeof node, key: string) =>
+    change(
+      (d) => updateNode(d, node.id, (n) => (n.type === 'pattern' ? fn(n) : n)),
+      `node:${node.id}:${key}`,
+    );
+
+  /** Change N; bindings of copies that no longer exist are dropped. */
+  const setCount = (groupId: string, count: number) =>
+    set((n) => {
+      const repeat = { ...n.repeat, [groupId]: count };
+      const keys = pattern ? listSlots(pattern, repeat, tree.lookup)?.map((x) => x.key) : undefined;
+      const bindings = keys
+        ? Object.fromEntries(Object.entries(n.bindings).filter(([k]) => keys.includes(k)))
+        : n.bindings;
+      return { ...n, repeat, bindings };
+    }, `repeat:${groupId}`);
+
+  const bind = (key: string, agentId: string) =>
+    set((n) => {
+      if (agentId === UNBOUND) {
+        const { [key]: _removed, ...rest } = n.bindings;
+        return { ...n, bindings: rest };
+      }
+      const agent = {
+        kind: 'agent' as const,
+        id: agentId,
+        version: agentVersions[agentId]?.version ?? 'v1',
+      };
+      return { ...n, bindings: { ...n.bindings, [key]: { kind: 'agent', agent } } };
+    }, `bind:${key}`);
+
+  const loops = analyzeLoops(doc.workflow);
+  const joinedPorts = pattern
+    ? patternPorts(pattern).inputs.map((port) => ({
+        port,
+        inputs: portInputs(doc.workflow, node.id, port.id, loops).length,
+      }))
+    : [];
+
   return (
-    <section className="space-y-2 rounded-lg border p-3" aria-label="Pattern">
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-medium">
-            {pattern?.name ?? (pinned.state === 'missing' ? 'Missing pattern' : node.pattern.id)}
+    <>
+      <section className="space-y-2 rounded-lg border p-3" aria-label="Pattern">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium">
+              {pattern?.name ?? (pattern === null ? 'Missing pattern' : node.pattern.id)}
+            </div>
+            <div className="font-mono text-xs text-muted-foreground">{node.pattern.version}</div>
           </div>
-          <div className="font-mono text-xs text-muted-foreground">{node.pattern.version}</div>
+          <Button variant="outline" size="sm" asChild>
+            <Link to={`/patterns/${node.pattern.id}`}>
+              <ExternalLink />
+              Open
+            </Link>
+          </Button>
         </div>
-        <Button variant="outline" size="sm" asChild>
-          <Link to={`/patterns/${node.pattern.id}`}>
-            <ExternalLink />
-            Open
-          </Link>
-        </Button>
-      </div>
-      {pattern?.description && (
-        <p className="text-xs text-muted-foreground">{pattern.description}</p>
+        {pattern?.description && (
+          <p className="text-xs text-muted-foreground">{pattern.description}</p>
+        )}
+      </section>
+
+      {pattern && pattern.repeat.length > 0 && (
+        <Field
+          label="How many"
+          hint="Changing a count keeps the bindings of the copies that remain."
+        >
+          <div className="space-y-2">
+            {pattern.repeat.map((g) => (
+              <label key={g.id} className="flex items-center gap-2 text-sm">
+                <Repeat2 className="size-4 shrink-0 text-violet-700" />
+                <span className="w-28 truncate">{g.label}</span>
+                <OptionalNumber
+                  value={repeatCount(g, node.repeat)}
+                  aria-label={`Number of ${g.label}`}
+                  className="h-8 w-16"
+                  onChange={(v) =>
+                    v !== undefined && setCount(g.id, Math.min(g.max, Math.max(g.min, v)))
+                  }
+                />
+                <span className="text-xs text-muted-foreground">
+                  {g.min}–{g.max}
+                </span>
+              </label>
+            ))}
+          </div>
+        </Field>
       )}
-    </section>
+
+      {joinedPorts
+        .filter((p) => p.inputs > 1)
+        .map(({ port, inputs }) => (
+          <PortJoinField
+            key={port.id}
+            name={port.name}
+            inputs={inputs}
+            join={node.portJoins[port.id]}
+            onChange={(join) =>
+              set(
+                (n) => ({ ...n, portJoins: { ...n.portJoins, [port.id]: join } }),
+                `join:${port.id}`,
+              )
+            }
+          />
+        ))}
+
+      {kind === 'project' ? (
+        <Field
+          label="Slots"
+          hint="Who fills each role. Changing a binding never forks the pattern."
+        >
+          {!slots ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : slots.length === 0 ? (
+            <p className="text-sm text-muted-foreground">This pattern has no slots.</p>
+          ) : (
+            <ul className="space-y-3" aria-label="Slot bindings">
+              {slots.map((slot) => {
+                const b = node.bindings[slot.key];
+                return (
+                  <SlotBindingRow
+                    key={slot.key}
+                    slot={slot}
+                    compact
+                    value={b?.kind === 'agent' ? b.agent.id : UNBOUND}
+                    onChange={(id) => bind(slot.key, id)}
+                  />
+                );
+              })}
+            </ul>
+          )}
+        </Field>
+      ) : (
+        slots &&
+        slots.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            Its slots ({slots.map((x) => x.role).join(', ')}) are slots of this pattern too, bound
+            when this pattern is used.
+          </p>
+        )
+      )}
+    </>
+  );
+}
+
+/** How an input port with several incoming edges waits for them. */
+function PortJoinField({
+  name,
+  inputs,
+  join,
+  onChange,
+}: {
+  name: string;
+  inputs: number;
+  join: JoinMode | undefined;
+  onChange: (join: JoinMode) => void;
+}) {
+  return (
+    <Field label={`Join at “${name}”`} hint={`${String(inputs)} inputs arrive at this port.`}>
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        size="sm"
+        value={join?.mode ?? ''}
+        onValueChange={(v) => {
+          if (v === 'all' || v === 'any') onChange({ mode: v });
+          else if (v === 'n-of-m') onChange({ mode: 'n-of-m', n: Math.min(2, inputs) });
+        }}
+        aria-label={`Join mode at ${name}`}
+      >
+        <ToggleGroupItem value="all">Wait for all</ToggleGroupItem>
+        <ToggleGroupItem value="any">Any one</ToggleGroupItem>
+        <ToggleGroupItem value="n-of-m">Some</ToggleGroupItem>
+      </ToggleGroup>
+      {join?.mode === 'n-of-m' && (
+        <div className="flex items-center gap-2 text-sm">
+          Proceed when
+          <OptionalNumber
+            value={join.n}
+            className="h-8 w-16"
+            aria-label="Inputs needed"
+            onChange={(n) => n !== undefined && onChange({ mode: 'n-of-m', n })}
+          />
+          of {inputs} inputs arrived
+        </div>
+      )}
+      {!join && <p className="text-xs text-destructive">Choose how this port waits.</p>}
+    </Field>
   );
 }
