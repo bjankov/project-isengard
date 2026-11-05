@@ -249,8 +249,21 @@ export function WorkflowEditor({
   const {
     expanded,
     progress,
-    toggle: toggleExpanded,
+    toggle: toggleFrame,
   } = useExpanded(`app.expanded.${kind}.${entityId || 'new'}`);
+  /** Expand or collapse; collapsing drops selections inside the frame (they disappear). */
+  const toggleExpanded = useCallback(
+    (path: string) => {
+      if (expanded.has(path)) {
+        const inside = (id: string) => id.startsWith(`${path}/`);
+        setSelection((sel) =>
+          sel.nodes.some(inside) ? { ...sel, nodes: sel.nodes.filter((id) => !inside(id)) } : sel,
+        );
+      }
+      toggleFrame(path);
+    },
+    [expanded, toggleFrame],
+  );
   const lookup = useMemo<PatternLookup>(() => patterns ?? (() => undefined), [patterns]);
   const bound = useMemo(() => {
     const flat = flattenWorkflow(graph, lookup);
@@ -314,6 +327,11 @@ export function WorkflowEditor({
       drawn.add(path);
       for (const inner of layout.nodes) {
         const open = inner.frame ? (progress.get(inner.id) ?? 1) : undefined;
+        const nested = inner.node.type === 'pattern' ? lookup(inner.node.pattern) : undefined;
+        const box =
+          inner.frame && nested
+            ? lerpSize(collapsedSize(nested), inner.frame, open ?? 1)
+            : undefined;
         flowNodes.push({
           id: inner.id,
           type: inner.port
@@ -323,9 +341,19 @@ export function WorkflowEditor({
               : flowNodeType(inner.node.type),
           parentId: inner.parent,
           position: inner.position,
-          data: { node: inner.node, inner: true, ...(open !== undefined ? { open } : {}) },
+          data: {
+            node: inner.node,
+            inner: true,
+            ...(open !== undefined ? { open } : {}),
+            ...(box ? { box } : {}),
+          },
           draggable: false,
-          selectable: false,
+          // Agents inside take per-project overrides, so they can be selected (in a project).
+          selectable:
+            kind === 'project' &&
+            inner.node.type === 'agent' &&
+            inner.node.binding.kind === 'agent',
+          selected: selection.nodes.includes(inner.id),
           connectable: false,
           measured: measured[inner.id],
           ...(inner.frame ? { width: inner.frame.width, height: inner.frame.height } : {}),
@@ -348,7 +376,14 @@ export function WorkflowEditor({
     };
 
     // Top level: frames for expanded instances, and room around them.
-    const frames: { id: string; at: { x: number; y: number }; closed: Size; open: Size }[] = [];
+    const frames: {
+      id: string;
+      at: { x: number; y: number };
+      closed: Size;
+      /** The size it shows now (animating), and its size when fully open. */
+      open: Size;
+      full: Size;
+    }[] = [];
     for (const n of graph.nodes) {
       if (n.type !== 'pattern' || !expanded.has(n.id)) continue;
       const layout = frameLayout(n.id, n, ctx);
@@ -362,6 +397,7 @@ export function WorkflowEditor({
         at: doc.layout.nodes[n.id] ?? { x: 0, y: 0 },
         closed,
         open: lerpSize(closed, layout.size, t),
+        full: layout.size,
       });
     }
     for (const n of graph.nodes) {
@@ -389,10 +425,12 @@ export function WorkflowEditor({
           id: n.id,
           type: 'wf-pattern-frame',
           position,
-          data: { node: n, open },
+          // The node has its final size from the start (resizing it every animation frame
+          // makes the resize observer loop); only the box drawn inside it grows.
+          data: { node: n, open, box: frame.open },
           selected: selection.nodes.includes(n.id),
-          width: frame.open.width,
-          height: frame.open.height,
+          width: frame.full.width,
+          height: frame.full.height,
           measured: measured[n.id],
         });
         addFrame(n.id, n, open);
@@ -428,6 +466,7 @@ export function WorkflowEditor({
 
     return { nodes: flowNodes, edges: [...edges, ...innerEdges], shift };
   }, [
+    kind,
     graph,
     doc.layout.nodes,
     selection,
@@ -749,8 +788,10 @@ export function WorkflowEditor({
   // ---- Delete, copy, paste, undo ----
 
   const deleteSelection = useCallback(() => {
-    if (selection.nodes.length + selection.edges.length === 0) return;
-    change((d) => removeItems(d, selection.nodes, selection.edges));
+    // Nodes inside a pattern instance can't be deleted (they belong to the pattern).
+    const own = selection.nodes.filter((id) => !id.includes('/'));
+    if (own.length + selection.edges.length === 0) return;
+    change((d) => removeItems(d, own, selection.edges));
     setSelection({ nodes: [], edges: [] });
   }, [selection, change]);
 
@@ -1006,6 +1047,7 @@ export function WorkflowEditor({
           entityId={entityId}
           dirty={editor.dirty}
           changeAndSave={changeAndSave}
+          innerNodes={bound}
           doc={doc}
           change={change}
           selection={selection}

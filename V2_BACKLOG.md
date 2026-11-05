@@ -23,6 +23,11 @@ Add to this file whenever something is deferred. `PLAN.md` stays the source of t
 - **Joins** `all` / `any` / `n-of-m` and the loop-edge `history` toggle (`latest` / `all`).
   - Loop-back edges and shared-store reads don't count as join inputs: an edge coming back round a loop re-runs its target with the latest of its other inputs (PLAN.md 7.5, agreed in M4).
 - **`onExhausted`** on a capped decision exit: `halt` (stop and ask a human, the default) or take another exit of the same decision.
+- **Pattern instances** (agreed in M5): a run uses the instance's flattened graph (`flattenWorkflow`):
+  - repeat groups copied N times: `parallel` copies all get the group's inputs (and a decision exit into the group becomes one exit per copy, each with the cap); `chain` copies run one after another
+  - an input port with several incoming edges waits as its `portJoins` entry says
+  - content entering through a port goes through the external edge's context mode, then the inner edge's (both apply, in that order)
+  - slots are filled by the outermost instance's bindings; overrides are keyed by node path
 
 ### Other v2 features (PLAN.md 3.2)
 - Workspace rollback via git checkpoints during runs. The workspace is already required to be a git repo for this.

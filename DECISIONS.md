@@ -351,3 +351,8 @@ Format: date, milestone, decision, reason.
   - **Save as new:** a name (default "<name> (custom)"), then the fork's content is created as a new entity (`v1`) and the fork branch is deleted. The node then pins the new entity. The original is unchanged.
 - **Promoting saves the project (or pattern) right away,** so it never pins a branch that no longer exists. To avoid saving unrelated edits by surprise, promotion is disabled while there are unsaved changes ("Save first").
 - **Other users of the promoted entity are not touched:** they keep their pinned version. The cascade preview that offers to move them is M6.
+- **Agents inside an expanded instance can be selected (in a project)** to set their project overrides (model, effort, limits), keyed by node path (`review-k2f8/maker`); the bound agent itself is changed on the instance. They can't be moved, deleted or connected. Collapsing a frame drops selections inside it.
+
+### Tests (2026-11-05, M5)
+- **Browser tests** (`e2e/patterns.spec.ts`): the M5 done-when flow end to end (insert, bind, expand, overrides inside, collapse, fork, edit, promote as v2 with a note); a pattern built by hand with a repeat group, merged and used with 3 copies; nested expansion in Hierarchy; a pattern inside a pattern.
+- **The tests share one library per run,** so the nested-insert test reads Maker-checker's current version instead of assuming `v1` (the done-when test promotes `v2`).

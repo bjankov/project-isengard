@@ -30,7 +30,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { WorkspaceField } from '@/components/workspace-field';
 import { errorAt, type FieldErrors } from '@/lib/validation';
 import { useEntities, useVersions } from '@/stores/library';
-import { AgentInspector } from './agent-inspector';
+import { AgentInspector, InnerAgentInspector } from './agent-inspector';
 import {
   nodeTitle,
   updateEdge,
@@ -66,6 +66,8 @@ interface InspectorProps {
   changeAndSave: Change;
   /** The document has unsaved changes. */
   dirty: boolean;
+  /** Nodes inside expanded pattern instances, by path (agents there can be selected). */
+  innerNodes: ReadonlyMap<string, WorkflowNode>;
   selection: Selection;
   settings: Settings | undefined;
   errors: FieldErrors;
@@ -175,12 +177,37 @@ export function Inspector(props: InspectorProps) {
       ? doc.workflow.edges.find((e) => e.id === selection.edges[0])
       : undefined;
 
+  const innerPath =
+    selection.nodes.length === 1 &&
+    selection.edges.length === 0 &&
+    selection.nodes[0]?.includes('/')
+      ? selection.nodes[0]
+      : undefined;
+  const inner = innerPath ? props.innerNodes.get(innerPath) : undefined;
+
   return (
     <aside
       className="flex w-[360px] shrink-0 flex-col overflow-hidden border-l bg-background"
       aria-label="Inspector"
     >
-      {node ? (
+      {innerPath && inner ? (
+        <>
+          <PanelHeader title={nodeTitle(inner)} subtitle="Agent inside a pattern" />
+          <div className="flex-1 space-y-4 overflow-y-auto p-4">
+            <ItemProblems
+              problems={props.check.problems.filter((p) => p.inner?.nodes.includes(innerPath))}
+              onFix={props.onFix}
+            />
+            <InnerAgentInspector
+              path={innerPath}
+              node={inner}
+              doc={doc}
+              change={props.change}
+              settings={props.settings}
+            />
+          </div>
+        </>
+      ) : node ? (
         <NodePanel {...props} node={node} />
       ) : edge ? (
         <EdgePanel {...props} edge={edge} />

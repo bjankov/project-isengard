@@ -42,6 +42,8 @@ export type FlowNodeData = {
   inner?: boolean;
   /** How far an expanded frame has opened (animation), 0..1. */
   open?: number;
+  /** The box an expanded frame draws now; it grows inside the node while animating. */
+  box?: { width: number; height: number };
 };
 export type FlowNode = Node<FlowNodeData>;
 
@@ -679,14 +681,16 @@ function PatternFrameView({ id, data, selected }: NodeProps<FlowNode>) {
   if (n.type !== 'pattern' || !ref) return null;
   const pattern = pinned.state === 'ready' ? pinned.entity : undefined;
   const forked = isBranchVersion(ref.version);
+  const box = data.box;
   return (
     <div
       className={cn(
-        'relative h-full w-full rounded-2xl border-2 border-violet-300 bg-violet-50/40 shadow-sm',
+        'absolute top-0 left-0 rounded-2xl border-2 border-violet-300 bg-violet-50/40 shadow-sm',
         selected && 'ring-2 ring-primary ring-offset-1',
         severity && problemOutline[severity],
         data.inner && 'bg-violet-100/40',
       )}
+      style={box ? { width: box.width, height: box.height } : { width: '100%', height: '100%' }}
       data-node-type="pattern"
       data-expanded="true"
       data-problem={severity}
