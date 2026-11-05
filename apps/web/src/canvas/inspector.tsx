@@ -30,8 +30,21 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { WorkspaceField } from '@/components/workspace-field';
 import { errorAt, type FieldErrors } from '@/lib/validation';
 import { useEntities, useVersions } from '@/stores/library';
-import { AgentInspector } from './agent-inspector';
-import { nodeTitle, updateEdge, updateNode, type Change, type ProjectDoc } from './doc';
+import { AgentInspector, InnerAgentInspector } from './agent-inspector';
+import {
+  nodeTitle,
+  updateEdge,
+  updateNode,
+  type CanvasKind,
+  type Change,
+  type WorkflowDoc,
+} from './doc';
+import {
+  PatternInstanceFields,
+  PatternPanelFields,
+  RepeatField,
+  SlotFields,
+} from './pattern-inspector';
 import { EnumSelect, OptionalNumber, StringList } from './fields';
 import { EvaluatorCode } from './evaluator-code';
 import { NODE_META } from './node-meta';
@@ -44,9 +57,17 @@ export interface Selection {
 }
 
 interface InspectorProps {
-  projectId: string;
-  doc: ProjectDoc;
+  kind: CanvasKind;
+  /** Id of the project or pattern being edited ('' while new). */
+  entityId: string;
+  doc: WorkflowDoc;
   change: Change;
+  /** A change saved right away (re-pinning a promoted fork). */
+  changeAndSave: Change;
+  /** The document has unsaved changes. */
+  dirty: boolean;
+  /** Nodes inside expanded pattern instances, by path (agents there can be selected). */
+  innerNodes: ReadonlyMap<string, WorkflowNode>;
   selection: Selection;
   settings: Settings | undefined;
   errors: FieldErrors;
@@ -156,12 +177,37 @@ export function Inspector(props: InspectorProps) {
       ? doc.workflow.edges.find((e) => e.id === selection.edges[0])
       : undefined;
 
+  const innerPath =
+    selection.nodes.length === 1 &&
+    selection.edges.length === 0 &&
+    selection.nodes[0]?.includes('/')
+      ? selection.nodes[0]
+      : undefined;
+  const inner = innerPath ? props.innerNodes.get(innerPath) : undefined;
+
   return (
     <aside
       className="flex w-[360px] shrink-0 flex-col overflow-hidden border-l bg-background"
       aria-label="Inspector"
     >
-      {node ? (
+      {innerPath && inner ? (
+        <>
+          <PanelHeader title={nodeTitle(inner)} subtitle="Agent inside a pattern" />
+          <div className="flex-1 space-y-4 overflow-y-auto p-4">
+            <ItemProblems
+              problems={props.check.problems.filter((p) => p.inner?.nodes.includes(innerPath))}
+              onFix={props.onFix}
+            />
+            <InnerAgentInspector
+              path={innerPath}
+              node={inner}
+              doc={doc}
+              change={props.change}
+              settings={props.settings}
+            />
+          </div>
+        </>
+      ) : node ? (
         <NodePanel {...props} node={node} />
       ) : edge ? (
         <EdgePanel {...props} edge={edge} />
@@ -171,6 +217,14 @@ export function Inspector(props: InspectorProps) {
           subtitle="Drag to move them together, or delete them."
           onDelete={props.onDeleteSelection}
         />
+      ) : props.kind === 'pattern' ? (
+        <>
+          <PanelHeader
+            title="Pattern"
+            subtitle="Select a node or edge to configure it. Inputs and Outputs are its ports."
+          />
+          <PatternPanelFields doc={doc} change={props.change} errors={props.errors} />
+        </>
       ) : (
         <ProjectPanel {...props} />
       )}
@@ -296,7 +350,7 @@ function ProjectPanel({ doc, change, errors, onWorkspaceCheck }: InspectorProps)
 // ---- Nodes ----
 
 function NodePanel(props: InspectorProps & { node: WorkflowNode }) {
-  const { node, doc, change, errors, projectId, settings } = props;
+  const { node, doc, change, errors, entityId, settings, kind } = props;
   const meta = NODE_META[node.type];
   const Icon = meta.icon;
   const index = doc.workflow.nodes.indexOf(node);
@@ -304,6 +358,9 @@ function NodePanel(props: InspectorProps & { node: WorkflowNode }) {
   const set = (fn: (n: WorkflowNode) => WorkflowNode, key: string) =>
     change((d) => updateNode(d, node.id, fn), `node:${node.id}:${key}`);
   const agentNames = Object.fromEntries((useEntities('agent') ?? []).map((a) => [a.id, a.name]));
+  const patternNames = Object.fromEntries(
+    (useEntities('pattern') ?? []).map((p) => [p.id, p.name]),
+  );
   const inputs = joinInputs(doc.workflow, node.id).length;
 
   return (
@@ -316,8 +373,14 @@ function NodePanel(props: InspectorProps & { node: WorkflowNode }) {
             <Icon className="size-4" />
           </span>
         }
-        title={nodeTitle(node, agentNames)}
-        subtitle={NODE_TYPE_INFO[node.type].label}
+        title={nodeTitle(node, agentNames, patternNames)}
+        subtitle={
+          node.type === 'agent' && node.binding.kind === 'slot'
+            ? 'Slot'
+            : kind === 'pattern' && (node.type === 'input' || node.type === 'output')
+              ? `${NODE_TYPE_INFO[node.type].label} port`
+              : NODE_TYPE_INFO[node.type].label
+        }
         onDelete={props.onDeleteSelection}
       />
       <div className="flex-1 space-y-4 overflow-y-auto p-4" key={node.id}>
@@ -413,12 +476,37 @@ function NodePanel(props: InspectorProps & { node: WorkflowNode }) {
           </>
         )}
 
-        {node.type === 'agent' && (
+        {kind === 'pattern' && <RepeatField node={node} doc={doc} change={change} />}
+
+        {node.type === 'agent' && node.binding.kind === 'slot' && (
+          <SlotFields
+            slot={node.binding}
+            onChange={(binding, key) =>
+              set((n) => (n.type === 'agent' ? { ...n, binding } : n), `slot:${key}`)
+            }
+          />
+        )}
+
+        {node.type === 'pattern' && (
+          <PatternInstanceFields
+            node={node}
+            doc={doc}
+            change={change}
+            changeAndSave={props.changeAndSave}
+            dirty={props.dirty}
+            kind={kind}
+            entityId={entityId}
+          />
+        )}
+
+        {node.type === 'agent' && node.binding.kind === 'agent' && (
           <AgentInspector
-            projectId={projectId}
+            projectId={entityId}
             nodeId={node.id}
             doc={doc}
             change={change}
+            changeAndSave={props.changeAndSave}
+            dirty={props.dirty}
             settings={settings}
             onPreview={() => props.onPreview(node.id)}
           />
@@ -668,6 +756,7 @@ function DecisionFields({
   change,
   set,
   err,
+  ...props
 }: InspectorProps & {
   node: Extract<WorkflowNode, { type: 'decision' }>;
   set: SetNode;
@@ -692,6 +781,7 @@ function DecisionFields({
   const setExit = (id: string, patch: Partial<DecisionExit>, key: string) =>
     setExits((xs) => xs.map((y) => (y.id === id ? { ...y, ...patch } : y)), `exit:${id}:${key}`);
   const firstAgent = agents?.[0];
+  const inPattern = props.kind === 'pattern';
 
   return (
     <>
@@ -703,8 +793,8 @@ function DecisionFields({
             { value: 'deterministic', label: 'Deterministic (code)' },
             {
               value: 'agent',
-              label: 'Agent',
-              description: firstAgent ? undefined : '(no agents yet)',
+              label: inPattern ? 'Agent (a slot)' : 'Agent',
+              description: firstAgent || inPattern ? undefined : '(no agents yet)',
             },
             { value: 'human', label: 'Human' },
           ]}
@@ -713,6 +803,12 @@ function DecisionFields({
             if (type === 'deterministic') switchEvaluator({ type, language: 'python', code: '' });
             else if (type === 'human')
               switchEvaluator({ type, instructions: '', allowFeedback: true });
+            else if (inPattern)
+              switchEvaluator({
+                type,
+                criteria: '',
+                agent: { kind: 'slot', role: 'Router', description: '' },
+              });
             else if (firstAgent)
               switchEvaluator({
                 type,
@@ -732,6 +828,28 @@ function DecisionFields({
           onChange={(next, key) => setEvaluator(next, key)}
           error={err('evaluator.code')}
         />
+      )}
+      {ev.type === 'agent' && ev.agent.kind === 'slot' && (
+        <>
+          <SlotFields
+            slot={ev.agent}
+            idPrefix="eval-slot"
+            roleLabel="Evaluating role"
+            onChange={(agent, key) => setEvaluator({ ...ev, agent }, `evalSlot:${key}`)}
+          />
+          <Field
+            label="Criteria"
+            htmlFor="node-criteria"
+            hint="What the agent judges. It answers with one of the exit labels below."
+          >
+            <Textarea
+              id="node-criteria"
+              value={ev.criteria}
+              rows={4}
+              onChange={(e) => setEvaluator({ ...ev, criteria: e.target.value }, 'criteria')}
+            />
+          </Field>
+        </>
       )}
       {ev.type === 'agent' && ev.agent.kind === 'agent' && (
         <>

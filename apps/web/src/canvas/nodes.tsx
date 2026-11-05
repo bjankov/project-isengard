@@ -3,6 +3,11 @@ import {
   isBranchVersion,
   joinInputs,
   joinLabel,
+  listSlots,
+  patternPorts,
+  portInputs,
+  repeatCount,
+  type AgentRef,
   type WorkflowNode,
   type WorkflowNodeType,
 } from '@app/schema';
@@ -14,7 +19,16 @@ import {
   type NodeProps,
   type NodeTypes,
 } from '@xyflow/react';
-import { CircleAlert, GitFork as ForkIcon, Merge, ShieldAlert, TriangleAlert } from 'lucide-react';
+import {
+  CircleAlert,
+  GitFork as ForkIcon,
+  Maximize2,
+  Merge,
+  Minimize2,
+  Repeat2,
+  ShieldAlert,
+  TriangleAlert,
+} from 'lucide-react';
 import { modelLabel } from '@/components/agent-defaults';
 import { BuiltinIcon } from '@/components/tools';
 import { cn } from '@/lib/utils';
@@ -22,7 +36,15 @@ import { usePinned } from '@/stores/pinned';
 import { useCanvasContext } from './context';
 import { NODE_META } from './node-meta';
 
-export type FlowNodeData = { node: WorkflowNode };
+export type FlowNodeData = {
+  node: WorkflowNode;
+  /** Inside an expanded pattern frame: read-only, not part of the edited graph. */
+  inner?: boolean;
+  /** How far an expanded frame has opened (animation), 0..1. */
+  open?: number;
+  /** The box an expanded frame draws now; it grows inside the node while animating. */
+  box?: { width: number; height: number };
+};
 export type FlowNode = Node<FlowNodeData>;
 
 const handleClass =
@@ -82,6 +104,27 @@ function JoinChip({ id }: { id: string }) {
   );
 }
 
+/** In a pattern: the repeat group a node belongs to, and how many copies it makes by default. */
+function RepeatChip({ id }: { id: string }) {
+  const { kind, repeat } = useCanvasContext();
+  const group = kind === 'pattern' ? repeat.find((g) => g.nodes.includes(id)) : undefined;
+  if (!group) return null;
+  return (
+    <Chip
+      className="bg-violet-100 text-violet-800"
+      title={`Repeated as “${group.label}”: ${String(group.min)}–${String(group.max)} copies, ${String(group.default)} by default${group.mode === 'chain' ? ', one after another' : ', in parallel'}`}
+    >
+      <Repeat2 className="size-3" />×{repeatCount(group)} {group.label}
+    </Chip>
+  );
+}
+
+/** In a pattern, Input and Output nodes are its ports. */
+function PortChip() {
+  const { kind } = useCanvasContext();
+  return kind === 'pattern' ? <Chip className="bg-emerald-100 text-emerald-800">port</Chip> : null;
+}
+
 const problemOutline = {
   error: 'outline-2 outline-offset-2 outline-destructive/70',
   warning: 'outline-2 outline-offset-2 outline-amber-400/80',
@@ -112,7 +155,7 @@ function Card({
 }) {
   const meta = NODE_META[type];
   const Icon = meta.icon;
-  const { severity, join } = useNodeStatus(id);
+  const { severity } = useNodeStatus(id);
   return (
     <div
       className={cn(
@@ -144,12 +187,11 @@ function Card({
           )}
         </div>
       </div>
-      {(badges || join !== undefined) && (
-        <div className="flex flex-wrap gap-1 px-2.5 pb-2">
-          {badges}
-          <JoinChip id={id} />
-        </div>
-      )}
+      <div className="flex flex-wrap gap-1 px-2.5 pb-2 empty:hidden">
+        {badges}
+        <RepeatChip id={id} />
+        <JoinChip id={id} />
+      </div>
       {children}
       {outHandle && <Handle type="source" position={Position.Right} className={handleClass} />}
     </div>
@@ -191,7 +233,12 @@ function InputNodeView({ id, data, selected }: NodeProps<FlowNode>) {
       inHandle={false}
       title={n.label || n.name}
       subtitle={firstLine(n.content) || 'Input'}
-      badges={<Chip>{n.payloadType}</Chip>}
+      badges={
+        <>
+          <PortChip />
+          <Chip>{n.payloadType}</Chip>
+        </>
+      }
     />
   );
 }
@@ -207,12 +254,52 @@ function OutputNodeView({ id, data, selected }: NodeProps<FlowNode>) {
       outHandle={false}
       title={n.label || n.name}
       subtitle="Output"
-      badges={<Chip>{n.payloadType}</Chip>}
+      badges={
+        <>
+          <PortChip />
+          <Chip>{n.payloadType}</Chip>
+        </>
+      }
     />
   );
 }
 
-function AgentNodeView({ id, data, selected }: NodeProps<FlowNode>) {
+/** The name of an agent at a pinned version, for slot defaults. */
+function useAgentName(ref: AgentRef | undefined): string | undefined {
+  const pinned = usePinned('agent', ref?.id, ref?.version);
+  return pinned.state === 'ready' ? pinned.entity.name : undefined;
+}
+
+/** A slot: a role in a pattern, bound to an agent when the pattern is inserted. */
+function SlotNodeView({ id, data, selected }: NodeProps<FlowNode>) {
+  const n = data.node;
+  const binding = n.type === 'agent' && n.binding.kind === 'slot' ? n.binding : undefined;
+  const defaultName = useAgentName(binding?.defaultAgent);
+  if (!binding) return null;
+  return (
+    <Card
+      id={id}
+      type="agent"
+      selected={selected}
+      className="border-dashed border-sky-300"
+      title={n.label || binding.role}
+      subtitle={
+        binding.defaultAgent
+          ? `Default: ${defaultName ?? binding.defaultAgent.id}`
+          : firstLine(binding.description) || 'Slot'
+      }
+      badges={<Chip className="bg-sky-100 text-sky-800">slot</Chip>}
+    />
+  );
+}
+
+function AgentNodeView(props: NodeProps<FlowNode>) {
+  const n = props.data.node;
+  if (n.type === 'agent' && n.binding.kind === 'slot') return <SlotNodeView {...props} />;
+  return <BoundAgentNodeView {...props} />;
+}
+
+function BoundAgentNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
   const { overrides, settings, tools } = useCanvasContext();
   const ref = n.type === 'agent' && n.binding.kind === 'agent' ? n.binding.agent : undefined;
@@ -427,6 +514,239 @@ function DecisionNodeView({ id, data, selected }: NodeProps<FlowNode>) {
 }
 
 /**
+ * A pattern instance, collapsed: its name and version, a handle per port (inputs left, outputs
+ * right), and how many of its slots are bound.
+ */
+/** Expand or collapse a pattern instance. */
+function ExpandButton({ path, open }: { path: string; open: boolean }) {
+  const { toggleExpanded } = useCanvasContext();
+  const Icon = open ? Minimize2 : Maximize2;
+  return (
+    <button
+      type="button"
+      className="nodrag flex size-6 shrink-0 items-center justify-center rounded-md text-violet-800 transition-colors hover:bg-violet-200/70"
+      aria-label={open ? 'Collapse pattern' : 'Expand pattern'}
+      title={open ? 'Collapse' : 'Expand to see inside'}
+      onClick={(e) => {
+        e.stopPropagation();
+        toggleExpanded(path);
+      }}
+    >
+      <Icon className="size-3.5" />
+    </button>
+  );
+}
+
+function PatternNodeView({ id, data, selected }: NodeProps<FlowNode>) {
+  const n = data.node;
+  const { kind, check, graph, loops } = useCanvasContext();
+  const ref = n.type === 'pattern' ? n.pattern : undefined;
+  const pinned = usePinned('pattern', ref?.id, ref?.version);
+  const { severity } = useNodeStatus(id);
+  if (n.type !== 'pattern' || !ref) return null;
+  const pattern = pinned.state === 'ready' ? pinned.entity : undefined;
+  // Until the pattern arrives, give the ports its edges use a handle, so they stay attached.
+  const used = (side: 'source' | 'target') =>
+    [
+      ...new Set(
+        graph.edges.flatMap((e) => (e[side].node === id && e[side].port ? [e[side].port] : [])),
+      ),
+    ].map((port) => ({ id: port, name: '…' }));
+  const ports = pattern
+    ? patternPorts(pattern)
+    : { inputs: used('target'), outputs: used('source') };
+  const slots = pattern
+    ? (listSlots(pattern, n.repeat, check.resolver.pattern ?? (() => undefined)) ?? [])
+    : [];
+  const bound = slots.filter((s) => n.bindings[s.key]?.kind === 'agent').length;
+  const forked = isBranchVersion(ref.version);
+  const rows = Math.max(ports.inputs.length, ports.outputs.length, 1);
+  return (
+    <div
+      className={cn(
+        'relative w-64 rounded-xl border-2 border-violet-300 bg-violet-50/60 text-card-foreground shadow-sm',
+        selected && 'ring-2 ring-primary ring-offset-1',
+        severity && problemOutline[severity],
+        pinned.state === 'missing' && 'border-destructive',
+      )}
+      data-node-type="pattern"
+      data-problem={severity}
+    >
+      <ProblemMarker id={id} />
+      <div className="flex items-start gap-2 p-2.5">
+        <span
+          className={cn(
+            'flex size-7 shrink-0 items-center justify-center rounded-md border',
+            NODE_META.pattern.accent,
+          )}
+        >
+          <NodeIcon type="pattern" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm leading-tight font-medium">
+            {n.label ||
+              (pattern?.name ?? (pinned.state === 'missing' ? 'Missing pattern' : ref.id))}
+          </div>
+          <div className="mt-0.5 truncate text-xs leading-tight text-muted-foreground">
+            {kind === 'pattern' && n.label && pattern ? pattern.name : 'Pattern'}
+          </div>
+        </div>
+        {pattern && <ExpandButton path={id} open={false} />}
+      </div>
+      <div className="relative grid grid-cols-2 gap-x-2 px-0 pb-2 text-[11px]">
+        {Array.from({ length: rows }, (_, i) => {
+          const input = ports.inputs[i];
+          const output = ports.outputs[i];
+          return (
+            <div key={i} className="contents">
+              <div className="relative flex h-6 items-center pl-3 text-muted-foreground">
+                {input && (
+                  <>
+                    <Handle
+                      type="target"
+                      id={input.id}
+                      position={Position.Left}
+                      className={handleClass}
+                    />
+                    <span className="truncate" data-port={input.id}>
+                      {input.name}
+                    </span>
+                    {portInputs(graph, id, input.id, loops).length > 1 && (
+                      <span
+                        className={cn(
+                          'ml-1 shrink-0 rounded px-1 text-[10px]',
+                          n.portJoins[input.id]
+                            ? 'bg-muted text-muted-foreground'
+                            : 'bg-destructive/10 text-destructive',
+                        )}
+                        title="Several inputs arrive at this port"
+                      >
+                        {n.portJoins[input.id]?.mode ?? 'join?'}
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+              <div className="relative flex h-6 items-center justify-end pr-3 text-muted-foreground">
+                {output && (
+                  <>
+                    <span className="truncate" data-port={output.id}>
+                      {output.name}
+                    </span>
+                    <Handle
+                      type="source"
+                      id={output.id}
+                      position={Position.Right}
+                      className={handleClass}
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap gap-1 border-t border-violet-200 px-2.5 py-2">
+        {forked ? (
+          <Chip className="bg-violet-100 text-violet-800">
+            <ForkIcon className="size-3" />
+            modified
+          </Chip>
+        ) : (
+          <Chip className="font-mono">{ref.version}</Chip>
+        )}
+        {kind === 'project' && !data.inner && slots.length > 0 && (
+          <Chip
+            className={cn(bound < slots.length && 'bg-destructive/10 text-destructive')}
+            title={slots.map((s) => s.role).join(', ')}
+          >
+            {bound}/{slots.length} slots bound
+          </Chip>
+        )}
+        <RepeatChip id={id} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * An expanded pattern instance: a frame around its nodes (separate React Flow nodes inside
+ * it), with its ports as pills on the left and right edges.
+ */
+function PatternFrameView({ id, data, selected }: NodeProps<FlowNode>) {
+  const n = data.node;
+  const ref = n.type === 'pattern' ? n.pattern : undefined;
+  const pinned = usePinned('pattern', ref?.id, ref?.version);
+  const { severity } = useNodeStatus(id);
+  if (n.type !== 'pattern' || !ref) return null;
+  const pattern = pinned.state === 'ready' ? pinned.entity : undefined;
+  const forked = isBranchVersion(ref.version);
+  const box = data.box;
+  return (
+    <div
+      className={cn(
+        'absolute top-0 left-0 rounded-2xl border-2 border-violet-300 bg-violet-50/40 shadow-sm',
+        selected && 'ring-2 ring-primary ring-offset-1',
+        severity && problemOutline[severity],
+        data.inner && 'bg-violet-100/40',
+      )}
+      style={box ? { width: box.width, height: box.height } : { width: '100%', height: '100%' }}
+      data-node-type="pattern"
+      data-expanded="true"
+      data-problem={severity}
+    >
+      <ProblemMarker id={id} />
+      <div className="flex items-center gap-2 px-3 pt-2.5" style={{ opacity: data.open ?? 1 }}>
+        <span
+          className={cn(
+            'flex size-6 shrink-0 items-center justify-center rounded-md border',
+            NODE_META.pattern.accent,
+          )}
+        >
+          <NodeIcon type="pattern" />
+        </span>
+        <span className="truncate text-sm font-medium">{n.label || pattern?.name}</span>
+        {forked ? (
+          <Chip className="bg-violet-100 text-violet-800">
+            <ForkIcon className="size-3" />
+            modified
+          </Chip>
+        ) : (
+          <Chip className="font-mono">{ref.version}</Chip>
+        )}
+        <RepeatChip id={id} />
+        <span className="ml-auto" />
+        {!data.inner && <span className="text-[10px] text-muted-foreground">read-only inside</span>}
+        <ExpandButton path={id} open />
+      </div>
+    </div>
+  );
+}
+
+/** A pattern's Input or Output, drawn as a pill on the edge of its expanded frame. */
+function PortNodeView({ data }: NodeProps<FlowNode>) {
+  const n = data.node;
+  if (n.type !== 'input' && n.type !== 'output') return null;
+  return (
+    <div
+      className="flex h-8 w-28 items-center justify-center gap-1 rounded-full border-2 border-emerald-300 bg-emerald-50 px-2 text-[11px] font-medium text-emerald-900 shadow-xs"
+      data-node-type="port"
+      data-port-direction={n.type === 'input' ? 'in' : 'out'}
+    >
+      <Handle type="target" position={Position.Left} className={handleClass} />
+      <NodeIcon type={n.type} />
+      <span className="truncate">{n.name}</span>
+      <Handle type="source" position={Position.Right} className={handleClass} />
+    </div>
+  );
+}
+
+function NodeIcon({ type }: { type: WorkflowNodeType }) {
+  const Icon = NODE_META[type].icon;
+  return <Icon className="size-4" />;
+}
+
+/**
  * React Flow node type of a workflow node. Prefixed so React Flow's built-in `input` and
  * `output` node styles never apply.
  */
@@ -444,4 +764,7 @@ export const nodeTypes: NodeTypes = {
   'wf-humanInput': HumanInputNodeView,
   'wf-sharedStore': SharedStoreNodeView,
   'wf-note': NoteNodeView,
+  'wf-pattern': PatternNodeView,
+  'wf-pattern-frame': PatternFrameView,
+  'wf-port': PortNodeView,
 };

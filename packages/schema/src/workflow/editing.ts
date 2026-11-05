@@ -2,7 +2,7 @@
  * Pure helpers for editing workflow graphs: default node contents, connection rules, payload
  * inference and loop analysis. Shared by the canvas (web) and tests; no I/O.
  */
-import type { AgentRef, ToolRef } from '../ids.js';
+import type { AgentRef, PatternRef, ToolRef } from '../ids.js';
 import type { WorkflowEdge, EdgeEndpoint } from './edges.js';
 import type { WorkflowGraph } from './graph.js';
 import type {
@@ -13,6 +13,7 @@ import type {
   WorkflowNode,
   WorkflowNodeType,
 } from './nodes.js';
+import { patternPorts, type PatternLookup } from './patterns.js';
 
 const ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
@@ -29,7 +30,10 @@ export function newLocalId(prefix: string, taken: Iterable<string>): string {
   }
 }
 
-/** Node types that can be placed on the canvas in M3 (patterns arrive in M5). */
+/**
+ * Node types placed from the palette with `createNode`. Pattern instances are inserted with
+ * `createPatternNode` after binding their slots.
+ */
 export const CANVAS_NODE_TYPES = [
   'input',
   'agent',
@@ -62,8 +66,16 @@ export const NODE_TYPE_INFO: Record<WorkflowNodeType, { label: string; descripti
   note: { label: 'Note', description: 'A comment on the canvas. Never executed.' },
 };
 
-/** Node types that need a library entity before they can be created. */
-export type NodeNeeds = { agent?: AgentRef; tool?: ToolRef };
+/**
+ * What some node types need before they can be created: an agent for agent nodes in a
+ * workflow, a slot (role, optional default agent) for agent nodes in a pattern, a preset for
+ * tool steps.
+ */
+export type NodeNeeds = {
+  agent?: AgentRef;
+  slot?: { role: string; defaultAgent?: AgentRef };
+  tool?: ToolRef;
+};
 
 /**
  * A new node of `type` with sensible defaults. Agent nodes need `needs.agent`, tool steps need
@@ -76,7 +88,20 @@ export function createNode(type: CanvasNodeType, id: string, needs: NodeNeeds = 
     case 'output':
       return { id, type, name: 'Result', payloadType: 'text' };
     case 'agent':
-      if (!needs.agent) throw new Error('an agent node needs an agent');
+      if (needs.slot) {
+        const { role, defaultAgent } = needs.slot;
+        return {
+          id,
+          type,
+          binding: {
+            kind: 'slot',
+            role,
+            description: '',
+            ...(defaultAgent ? { defaultAgent } : {}),
+          },
+        };
+      }
+      if (!needs.agent) throw new Error('an agent node needs an agent or a slot');
       return { id, type, binding: { kind: 'agent', agent: needs.agent } };
     case 'decision':
       return {
@@ -102,10 +127,24 @@ export function createNode(type: CanvasNodeType, id: string, needs: NodeNeeds = 
   }
 }
 
+/** A new pattern instance. `bindings` are keyed like `listSlots`. */
+export function createPatternNode(
+  id: string,
+  pattern: PatternRef,
+  bindings: Extract<WorkflowNode, { type: 'pattern' }>['bindings'] = {},
+  repeat: Record<string, number> = {},
+): WorkflowNode {
+  return { id, type: 'pattern', pattern, bindings, repeat, portJoins: {} };
+}
+
 // ---- Payload inference ----
 
 /** What a node emits on its outgoing edges (PLAN.md 7.2: inferred from the source). */
-export function inferPayload(graph: WorkflowGraph, source: EdgeEndpoint): PayloadType {
+export function inferPayload(
+  graph: WorkflowGraph,
+  source: EdgeEndpoint,
+  patterns?: PatternLookup,
+): PayloadType {
   const seen = new Set<string>();
   const of = (nodeId: string): PayloadType => {
     const node = graph.nodes.find((n) => n.id === nodeId);
@@ -119,6 +158,12 @@ export function inferPayload(graph: WorkflowGraph, source: EdgeEndpoint): Payloa
       case 'output':
       case 'note':
         return 'none';
+      case 'pattern': {
+        // An output port emits its declared payload.
+        const pattern = patterns?.(node.pattern);
+        const port = pattern && patternPorts(pattern).outputs.find((p) => p.id === source.port);
+        return port?.payloadType ?? 'text';
+      }
       case 'decision': {
         // A decision passes its input through on the chosen exit.
         for (const e of graph.edges) {
@@ -143,6 +188,7 @@ export function canConnect(
   graph: WorkflowGraph,
   source: EdgeEndpoint,
   target: EdgeEndpoint,
+  patterns?: PatternLookup,
 ): ConnectionCheck {
   const from = graph.nodes.find((n) => n.id === source.node);
   const to = graph.nodes.find((n) => n.id === target.node);
@@ -159,6 +205,23 @@ export function canConnect(
   }
   if (from.type === 'decision' && !from.exits.some((x) => x.id === source.port)) {
     return { ok: false, reason: 'Connect from one of the decision’s exits.' };
+  }
+  // Edges reach a pattern through its ports, never its internal nodes (PLAN.md 7.7).
+  if (from.type === 'pattern') {
+    const pattern = patterns?.(from.pattern);
+    if (
+      !source.port ||
+      (pattern && !patternPorts(pattern).outputs.some((p) => p.id === source.port))
+    )
+      return { ok: false, reason: 'Connect from one of the pattern’s output ports.' };
+  }
+  if (to.type === 'pattern') {
+    const pattern = patterns?.(to.pattern);
+    if (
+      !target.port ||
+      (pattern && !patternPorts(pattern).inputs.some((p) => p.id === target.port))
+    )
+      return { ok: false, reason: 'Connect to one of the pattern’s input ports.' };
   }
   const duplicate = graph.edges.some(
     (e) =>
@@ -177,6 +240,7 @@ export function createEdge(
   id: string,
   source: EdgeEndpoint,
   target: EdgeEndpoint,
+  patterns?: PatternLookup,
 ): WorkflowEdge {
   const from = graph.nodes.find((n) => n.id === source.node);
   const to = graph.nodes.find((n) => n.id === target.node);
@@ -184,7 +248,7 @@ export function createEdge(
     id,
     source: source.port ? { node: source.node, port: source.port } : { node: source.node },
     target: target.port ? { node: target.node, port: target.port } : { node: target.node },
-    payload: inferPayload(graph, source),
+    payload: inferPayload(graph, source, patterns),
     context: { mode: 'full' },
   };
   if (to?.type === 'sharedStore') edge.access = 'write';
@@ -270,7 +334,11 @@ export function exitOf(graph: WorkflowGraph, edge: WorkflowEdge): DecisionExit |
 
 export function analyzeLoops(graph: WorkflowGraph): LoopAnalysis {
   const nodeIds = graph.nodes.map((n) => n.id);
-  const inCycle = new Set(cycleEdges(nodeIds, graph.edges).map((e) => e.id));
+  // Reading a shared store is access to state, not a trigger (as for joins, PLAN.md 7.5), so
+  // an agent that writes a store and reads it back is not a loop.
+  const stores = new Set(graph.nodes.filter((n) => n.type === 'sharedStore').map((n) => n.id));
+  const flow = graph.edges.filter((e) => !stores.has(e.source.node));
+  const inCycle = new Set(cycleEdges(nodeIds, flow).map((e) => e.id));
 
   const capEdges = new Set(
     graph.edges
@@ -281,7 +349,7 @@ export function analyzeLoops(graph: WorkflowGraph): LoopAnalysis {
   // What still goes round once the caps are removed is an uncapped loop.
   const rest = cycleEdges(
     nodeIds,
-    graph.edges.filter((e) => !capEdges.has(e.id)),
+    flow.filter((e) => !capEdges.has(e.id)),
   );
   const restComp = components(nodeIds, rest);
   const groups = new Map<number, { nodes: Set<string>; edges: string[] }>();
@@ -297,7 +365,7 @@ export function analyzeLoops(graph: WorkflowGraph): LoopAnalysis {
   // Back edges: DFS from the inputs first (then any unvisited node), in node order.
   const out = new Map<string, WorkflowEdge[]>();
   for (const id of nodeIds) out.set(id, []);
-  for (const e of graph.edges) out.get(e.source.node)?.push(e);
+  for (const e of flow) out.get(e.source.node)?.push(e);
   const backEdges = new Set<string>();
   const state = new Map<string, 'active' | 'done'>();
   const visit = (v: string) => {
@@ -331,10 +399,29 @@ export function joinInputs(
   loops: LoopAnalysis = analyzeLoops(graph),
 ): WorkflowEdge[] {
   const node = graph.nodes.find((n) => n.id === nodeId);
-  if (!node || node.type === 'sharedStore' || node.type === 'note') return [];
+  // Pattern instances join per input port (`portInputs`), shared stores never join.
+  if (!node || node.type === 'sharedStore' || node.type === 'note' || node.type === 'pattern')
+    return [];
   const stores = new Set(graph.nodes.filter((n) => n.type === 'sharedStore').map((n) => n.id));
   return graph.edges.filter(
     (e) => e.target.node === nodeId && !loops.backEdges.has(e.id) && !stores.has(e.source.node),
+  );
+}
+
+/** The incoming edges of one input port of a pattern instance that count for its join. */
+export function portInputs(
+  graph: WorkflowGraph,
+  nodeId: string,
+  port: string,
+  loops: LoopAnalysis = analyzeLoops(graph),
+): WorkflowEdge[] {
+  const stores = new Set(graph.nodes.filter((n) => n.type === 'sharedStore').map((n) => n.id));
+  return graph.edges.filter(
+    (e) =>
+      e.target.node === nodeId &&
+      e.target.port === port &&
+      !loops.backEdges.has(e.id) &&
+      !stores.has(e.source.node),
   );
 }
 
@@ -355,10 +442,15 @@ export function joinLabel(join: JoinMode, inputs: number): string {
  * edge leaving a decision carries what came into it. Follows the first incoming edge with a
  * payload (the same rule as payload inference); returns the decision itself if it has none.
  */
-export function traceOrigin(graph: WorkflowGraph, edge: WorkflowEdge): WorkflowNode | undefined {
+export function traceOrigin(
+  graph: WorkflowGraph,
+  edge: WorkflowEdge,
+  /** Pattern boundary ports in a flattened graph: content passes through them too. */
+  passThrough: ReadonlySet<string> = new Set(),
+): WorkflowNode | undefined {
   const seen = new Set<string>();
   let node = graph.nodes.find((n) => n.id === edge.source.node);
-  while (node?.type === 'decision' && !seen.has(node.id)) {
+  while (node && (node.type === 'decision' || passThrough.has(node.id)) && !seen.has(node.id)) {
     seen.add(node.id);
     const id = node.id;
     const incoming =

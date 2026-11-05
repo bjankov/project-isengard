@@ -1,8 +1,7 @@
 import { createBrowserRouter, Navigate } from 'react-router';
-import { Shapes } from 'lucide-react';
 import { AppShell } from '@/components/app-shell';
 import { AgentEditorRoute, AgentsIndex, AgentsLayout } from '@/routes/agents';
-import { PlaceholderPage } from '@/routes/placeholder-page';
+import { PatternCanvasRoute, PatternsPage } from '@/routes/patterns';
 import { ProjectCanvasRoute, ProjectsPage } from '@/routes/projects';
 import { SettingsPage } from '@/routes/settings';
 import { SkillEditorRoute, SkillsIndex, SkillsLayout } from '@/routes/skills';
@@ -43,16 +42,8 @@ export const router = createBrowserRouter([
           { path: ':id', element: <ToolEditorRoute /> },
         ],
       },
-      {
-        path: '/patterns',
-        element: (
-          <PlaceholderPage
-            title="Patterns"
-            description="Reusable multi-agent structures."
-            icon={Shapes}
-          />
-        ),
-      },
+      { path: '/patterns', element: <PatternsPage /> },
+      { path: '/patterns/:id', element: <PatternCanvasRoute /> },
       { path: '/settings', element: <SettingsPage /> },
       { path: '*', element: <Navigate to="/projects" replace /> },
     ],

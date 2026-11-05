@@ -2,10 +2,12 @@ import {
   forkBranchName,
   isBranchVersion,
   modelKey,
+  type Agent,
   type AgentOverride,
   type Effort,
   type Limits,
   type Settings,
+  type WorkflowNode,
 } from '@app/schema';
 import { GitFork, Loader2, ScanEye, Sparkles } from 'lucide-react';
 import { useState } from 'react';
@@ -35,9 +37,10 @@ import {
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { ApiError, api } from '@/lib/api';
 import { compact, omit } from '@/lib/same';
+import { PromoteFork } from '@/components/promote-fork';
 import { usePinned } from '@/stores/pinned';
 import { useEntities, useVersions } from '@/stores/library';
-import { updateNode, type Change, type ProjectDoc } from './doc';
+import { updateNode, type Change, type WorkflowDoc } from './doc';
 import { OptionalNumber } from './fields';
 import { Kbd } from './kbd';
 
@@ -71,13 +74,17 @@ export function AgentInspector({
   nodeId,
   doc,
   change,
+  changeAndSave,
+  dirty,
   settings,
   onPreview,
 }: {
   projectId: string;
   nodeId: string;
-  doc: ProjectDoc;
+  doc: WorkflowDoc;
   change: Change;
+  changeAndSave: Change;
+  dirty: boolean;
   settings: Settings | undefined;
   onPreview: () => void;
 }) {
@@ -94,22 +101,18 @@ export function AgentInspector({
   if (!ref) return null;
 
   const agent = pinned.state === 'ready' ? pinned.entity : undefined;
-  const override = doc.overrides[nodeId] ?? {};
   const models = settings?.models ?? [];
   const forked = isBranchVersion(ref.version);
   const latest = versions[ref.id]?.version ?? undefined;
 
-  const pin = (version: string, id = ref.id) =>
-    change((d) =>
+  const pin = (version: string, id = ref.id, apply: Change = change) =>
+    apply((d) =>
       updateNode(d, nodeId, (n) =>
         n.type === 'agent'
           ? { ...n, binding: { kind: 'agent', agent: { kind: 'agent', id, version } } }
           : n,
       ),
     );
-  const setOverride = (patch: Partial<AgentOverride>, key: string) =>
-    change((d) => ({ ...d, overrides: withOverride(d.overrides, nodeId, patch) }), key);
-
   const fork = async () => {
     setForking(true);
     const branch = forkBranchName(projectId, nodeId);
@@ -182,87 +185,7 @@ export function AgentInspector({
         </p>
       </Field>
 
-      {/* Overrides: project-specific, no branching */}
-      <section className="space-y-4 rounded-lg border p-3" aria-label="Project overrides">
-        <div>
-          <h3 className="text-sm font-semibold">Project overrides</h3>
-          <p className="text-xs text-muted-foreground">
-            Model, effort and limits for this project only. Changing them never forks the agent.
-          </p>
-        </div>
-        <Field label="Model" htmlFor="override-model">
-          <Select
-            value={override.model ? modelKey(override.model) : INHERIT}
-            onValueChange={(key) => {
-              const m = models.find((o) => modelKey(o) === key);
-              setOverride(
-                { model: m ? { provider: m.provider, model: m.model } : undefined },
-                'override:model',
-              );
-            }}
-          >
-            <SelectTrigger id="override-model" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={INHERIT}>
-                Inherit{agent ? ` (${modelLabel(agent.defaults.model, models)})` : ''}
-              </SelectItem>
-              {models.map((m) => (
-                <SelectItem key={modelKey(m)} value={modelKey(m)}>
-                  {m.label ?? m.model}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field label="Effort">
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            size="sm"
-            value={override.effort ?? INHERIT}
-            onValueChange={(v) =>
-              v &&
-              setOverride({ effort: v === INHERIT ? undefined : (v as Effort) }, 'override:effort')
-            }
-            aria-label="Effort override"
-          >
-            <ToggleGroupItem value={INHERIT} className="px-2 text-xs">
-              Inherit{agent ? ` (${agent.defaults.effort})` : ''}
-            </ToggleGroupItem>
-            {(['low', 'medium', 'high'] as const).map((e) => (
-              <ToggleGroupItem key={e} value={e} className="px-2 text-xs capitalize">
-                {e}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-        </Field>
-        <div className="grid grid-cols-3 gap-2">
-          {LIMITS.map((l) => (
-            <Field key={l.key} label={l.label} htmlFor={`override-${l.key}`}>
-              <OptionalNumber
-                id={`override-${l.key}`}
-                value={override.limits?.[l.key]}
-                placeholder={agent ? String(agent.defaults.limits[l.key]) : undefined}
-                onChange={(v) =>
-                  setOverride({ limits: { ...override.limits, [l.key]: v } }, `override:${l.key}`)
-                }
-              />
-            </Field>
-          ))}
-        </div>
-        {Object.keys(override).length > 0 && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            onClick={() => change((d) => ({ ...d, overrides: omit(d.overrides, nodeId) }))}
-          >
-            Reset to the agent’s defaults
-          </Button>
-        )}
-      </section>
+      <OverridesSection nodeId={nodeId} agent={agent} doc={doc} change={change} models={models} />
 
       {/* Definition: changing it forks */}
       <section
@@ -328,6 +251,21 @@ export function AgentInspector({
               </Button>
             )}
           </div>
+        ) : null}
+        {forked ? (
+          <div className="space-y-2 border-t pt-3">
+            <p className="text-xs text-muted-foreground">
+              Promote the fork: make it the library agent’s next version, or a new agent.
+            </p>
+            <PromoteFork
+              kind="agent"
+              id={ref.id}
+              branch={ref.version}
+              name={agents?.find((a) => a.id === ref.id)?.name ?? agent?.name ?? ref.id}
+              disabledReason={dirty ? 'Save the project first: promoting saves it.' : undefined}
+              onPromoted={(to) => pin(to.version, to.id, changeAndSave)}
+            />
+          </div>
         ) : (
           <Button
             size="sm"
@@ -365,6 +303,154 @@ export function AgentInspector({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+}
+
+/**
+ * Model, effort and limits for one agent node in this project, keyed by its node id, or by
+ * its path for an agent inside a pattern instance (`review-k2f8/maker`). Never forks.
+ */
+export function OverridesSection({
+  nodeId,
+  agent,
+  doc,
+  change,
+  models,
+}: {
+  nodeId: string;
+  agent: Agent | undefined;
+  doc: WorkflowDoc;
+  change: Change;
+  models: Settings['models'];
+}) {
+  const override = doc.overrides[nodeId] ?? {};
+  const setOverride = (patch: Partial<AgentOverride>, key: string) =>
+    change((d) => ({ ...d, overrides: withOverride(d.overrides, nodeId, patch) }), key);
+  return (
+    <section className="space-y-4 rounded-lg border p-3" aria-label="Project overrides">
+      <div>
+        <h3 className="text-sm font-semibold">Project overrides</h3>
+        <p className="text-xs text-muted-foreground">
+          Model, effort and limits for this project only. Changing them never forks the agent.
+        </p>
+      </div>
+      <Field label="Model" htmlFor="override-model">
+        <Select
+          value={override.model ? modelKey(override.model) : INHERIT}
+          onValueChange={(key) => {
+            const m = models.find((o) => modelKey(o) === key);
+            setOverride(
+              { model: m ? { provider: m.provider, model: m.model } : undefined },
+              'override:model',
+            );
+          }}
+        >
+          <SelectTrigger id="override-model" className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={INHERIT}>
+              Inherit{agent ? ` (${modelLabel(agent.defaults.model, models)})` : ''}
+            </SelectItem>
+            {models.map((m) => (
+              <SelectItem key={modelKey(m)} value={modelKey(m)}>
+                {m.label ?? m.model}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
+      <Field label="Effort">
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          value={override.effort ?? INHERIT}
+          onValueChange={(v) =>
+            v &&
+            setOverride({ effort: v === INHERIT ? undefined : (v as Effort) }, 'override:effort')
+          }
+          aria-label="Effort override"
+        >
+          <ToggleGroupItem value={INHERIT} className="px-2 text-xs">
+            Inherit{agent ? ` (${agent.defaults.effort})` : ''}
+          </ToggleGroupItem>
+          {(['low', 'medium', 'high'] as const).map((e) => (
+            <ToggleGroupItem key={e} value={e} className="px-2 text-xs capitalize">
+              {e}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+      </Field>
+      <div className="grid grid-cols-3 gap-2">
+        {LIMITS.map((l) => (
+          <Field key={l.key} label={l.label} htmlFor={`override-${l.key}`}>
+            <OptionalNumber
+              id={`override-${l.key}`}
+              value={override.limits?.[l.key]}
+              placeholder={agent ? String(agent.defaults.limits[l.key]) : undefined}
+              onChange={(v) =>
+                setOverride({ limits: { ...override.limits, [l.key]: v } }, `override:${l.key}`)
+              }
+            />
+          </Field>
+        ))}
+      </div>
+      {Object.keys(override).length > 0 && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          onClick={() => change((d) => ({ ...d, overrides: omit(d.overrides, nodeId) }))}
+        >
+          Reset to the agent’s defaults
+        </Button>
+      )}
+    </section>
+  );
+}
+
+/**
+ * An agent inside a pattern instance (selected in an expanded frame): the bound agent is
+ * read-only here (bindings are changed on the instance), but its model, effort and limits can
+ * be overridden for this project, keyed by the node's path.
+ */
+export function InnerAgentInspector({
+  path,
+  node,
+  doc,
+  change,
+  settings,
+}: {
+  path: string;
+  node: WorkflowNode;
+  doc: WorkflowDoc;
+  change: Change;
+  settings: Settings | undefined;
+}) {
+  const ref =
+    node.type === 'agent' && node.binding.kind === 'agent' ? node.binding.agent : undefined;
+  const pinned = usePinned('agent', ref?.id, ref?.version);
+  const agent = pinned.state === 'ready' ? pinned.entity : undefined;
+  if (!ref) return null;
+  return (
+    <div className="space-y-6">
+      <p className="text-xs text-muted-foreground">
+        Inside a pattern: which agent fills this slot is set on the pattern instance. Model, effort
+        and limits can be overridden here for this project.
+      </p>
+      <p className="text-xs">
+        <span className="font-medium">{agent?.name ?? ref.id}</span>{' '}
+        <span className="font-mono text-muted-foreground">{ref.version}</span>
+      </p>
+      <OverridesSection
+        nodeId={path}
+        agent={agent}
+        doc={doc}
+        change={change}
+        models={settings?.models ?? []}
+      />
     </div>
   );
 }

@@ -13,6 +13,9 @@ A local GUI for designing agentic development workflows. See `PLAN.md` for the s
 pnpm install
 pnpm dev          # API on :4317, web app on :5173 (opens the browser)
 ```
+`pnpm install` says "Ignored build scripts: better-sqlite3": that's expected, it ships prebuilt
+binaries. Don't approve its build (that needs `node-gyp`).
+
 Data lives in `~/.app` (`library/` is a git repo, `index.db` is a rebuildable index).
 Set `APP_HOME=/some/dir` to use another folder, `APP_NO_OPEN=1` to not open the browser.
 
@@ -43,6 +46,22 @@ offers `git init` if needed). The canvas opens:
 - decisions: the evaluator (code, agent or human), its exits in order, and what happens when a
   loop's cap is hit; deterministic code is Python in a code editor (drop a `.py` file on it).
   Nothing is ever run in this version.
+
+## Patterns
+Reusable multi-agent structures (maker-checker, fan-out, router…). The library starts with the
+10 built-ins (they're ordinary patterns: edit or delete them).
+- **Patterns tab**: open one, or **New pattern**. It is edited on the same canvas as a workflow:
+  Input and Output nodes are its ports, agent nodes are **Slots** (a role, optionally with a
+  default agent), and a node's **Repeat** field makes it one of N copies (e.g. Worker 1…N).
+  The pattern panel (click the empty canvas) sets each repeat group's range and whether copies
+  run in parallel or one after another. Patterns can contain other patterns.
+- **In a project**: **Pattern…** in the palette (or `Ctrl/Cmd+K`) inserts one: choose how many
+  copies, and bind each slot to an agent. Connect to its ports. The expand button (or a
+  double-click) opens it in place, read-only, with its ports on the frame; agents inside can
+  get project overrides there.
+- **Customize for this project** forks the instance: **Edit fork** changes what's inside, just
+  for this node (marked **modified**). Promote the fork from the inspector: **Merge to main**
+  (the pattern's next version) or **Save as new pattern**. Agent forks are promoted the same way.
 
 ## Check
 ```sh

@@ -255,3 +255,48 @@ Open issues / questions (answered by the user on 2026-11-05):
 - **Toasts sit bottom-left, so they briefly cover the left end of the problems bar.** **Answer: polish, later (M7).**
 - **Context preview covers agent nodes only.** An evaluator agent in a decision has no preview yet. **Answer: later.**
 - Templates are checked on the server like projects (uncapped loops block creating one), but there is no template editor to show their problems.
+
+## M5: Patterns (2026-11-05)
+Status: done
+
+Built:
+- **Before the milestone:** `pnpm install` no longer tries to build better-sqlite3 from source (it ships prebuilt binaries). The server tests pass on macOS (temp folder resolved through `/var` → `/private/var`).
+- **Schema:**
+  - pattern instances: slot bindings by path, N per repeat group, a join per input port
+  - patterns: repeat groups (`parallel` or `chain`, min/default/max)
+  - overrides keyed by node path, for agents inside instances
+  - `flattenWorkflow` / `checkWorkflow`: instances are expanded into plain nodes, so every rule works across pattern boundaries; problems are shown on the instance
+  - new rules: unbound slot, unconnected input port, unknown port, a pattern containing itself, slot in a workflow, concrete agent in a pattern, invalid repeat group, missing pattern
+  - the 10 built-in patterns as data (PLAN.md 10), each checked clean at several sizes
+  - a store read is no longer a loop (as for joins)
+- **Server:** the built-ins are seeded once per library (a deleted one stays deleted); save and merge checks load pinned patterns, recursively, and check patterns themselves.
+- **One canvas for projects and patterns.** In a pattern: Slots (role, description, default agent), slot evaluators, a Repeat field per node, repeat groups in the pattern panel, port chips.
+- **Patterns tab:** cards with built-in, version and draft badges; New pattern; the editor with draft, merge and history like every other entity.
+- **Insert:** Pattern… in the palette (click or drag) or quick-add; choose N, bind slots (defaults pre-selected); placed and connected through its ports. Instance inspector: version, how many, bindings, a join per port, Open.
+- **Expand and collapse** (button or double-click): a frame with the pattern's nodes (copies stacked, bound agents shown), ports as pills on the frame edges with external edges routed through them, nested patterns one level at a time, neighbours moved aside, animated. View state only, never saved. Agents inside take project overrides.
+- **Forks and promotion:** Customize / Edit fork / Use library version for pattern instances (like agents); promotion of pattern and agent forks: **Merge to main** (with a note; main and the fork side by side if main moved on) or **Save as new**; the node is re-pinned and the project saved.
+- **Tests:** 160 unit/API tests (27 new) and 20 browser tests (4 new, in `e2e/patterns.spec.ts`).
+
+How to try it:
+1. `pnpm install`, then `pnpm dev`. On first start the library gets the 10 built-in patterns.
+2. **Patterns** shows them. Open **Hierarchy**: click the expand button on **Team** to see a nested Supervisor with its two workers. Nothing changes by looking.
+3. Create two agents in **Agents** (e.g. Coder and Critic), then a project in **Projects**.
+4. On the canvas, select **Task**, click **Pattern…** in the palette, pick **Maker-checker**, bind Maker and Checker, **Insert**. Connect its **Result** port to the project's Result. Save.
+5. Click the expand button on the instance: the maker, checker and decision with the loop, ports on the frame. Click the Coder inside it and set Effort to High (a project override; nothing forks). Save, then collapse.
+6. Select the instance → **Customize for this project** → **Fork pattern** (it shows **modified**). Save, then **Edit fork**: change something (e.g. rename the Checker slot), Save, **← Back to the project**.
+7. Select the instance → **Merge to main** → a note → **Merge as v2**. The instance pins v2 and the project is saved; **Patterns → Maker-checker** shows v2 in its history with the note.
+8. **Patterns → New pattern**: select its slot, set **Repeat** to "New repeat group…", add a second Slot from the palette. The problems bar shows the joins the copies need; fix them, Save, **Merge as v2**, and insert it into a project with 3 copies.
+9. `pnpm check`, `pnpm test:e2e`.
+
+Deviations from PLAN.md:
+- **Expanded state is per browser, not in `layout.json`** (changes the M0 decision). Stored in the layout, expanding would count as an unsaved change and create drafts of built-ins just by looking. PLAN.md 7.7 calls it view state only.
+- **Additions agreed at planning:** repeat groups for "choose N" (PLAN.md 10), joins per input port, overrides for agents inside instances, and agent fork promotion.
+- **Other additions:** store reads don't form loops (Moderated discussion and Blackboard needed it); `chain` repeat groups (Pipeline needed it).
+
+Open issues / questions (answered by the user on 2026-11-05):
+- **Built-in layouts:** Moderated discussion and Blackboard have crossing store edges on the canvas. Cosmetic; M7? **Answer: yes, fix it (M7).**
+- **Templates made from a project with a fork** pin that fork branch; promoting the fork deletes the branch, so the template then pins a missing version (shown as missing). This belongs with M6's references and deletion work. **Answer: yes, in M6.**
+- **Context preview** covers agents in the project's own graph, not agents inside a pattern instance. Wanted for M6/M7? **Answer: v2; a pattern may stay a bit of a black box until then.**
+- **Use library version** on a fork leaves the fork branch unused in the library (as for agent forks in M3). Deleting forks is M6. **Answer: leave it for M6.**
+- **Inside a pattern editor, a nested instance's fork** is named after the outer pattern and promoted the same way; it works but isn't covered by a browser test.
+- **One `ResizeObserver` warning** in the whole browser run, as before M5 (harmless browser noise).

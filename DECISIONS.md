@@ -281,3 +281,84 @@ Format: date, milestone, decision, reason.
 - Unclear glob coverage stays an **error**, not a "can't confirm" warning. To revisit later.
 - Moving toasts away from the problems bar is polish for M7.
 - A context preview for evaluator agents in decisions is deferred (not scheduled yet).
+
+## 2026-11-05 (M5)
+
+### Before the milestone
+- **better-sqlite3 is no longer in `onlyBuiltDependencies`.** Version 13 ships prebuilt binaries for every platform and has no install script. Listing it made pnpm run an implicit `node-gyp rebuild` (the package contains `binding.gyp`), which fails when `node-gyp` isn't installed. pnpm now prints an "Ignored build scripts" warning on install; it is harmless, and `pnpm approve-builds` must not be used for it.
+- **Server tests resolve their temp folder with `realpathSync`.** On macOS `/var` links to `/private/var`, and git reports repo roots in resolved form, so the `inside-repo` test failed there (development was on Fedora until now). The app's behaviour is unchanged: the "Use <repo root>" suggestion shows the resolved path when the typed path goes through a symlink. User decision: fix only the test for now; the display issue is in `V2_BACKLOG.md` to revisit before release.
+
+### Agreed at planning (user decisions)
+- **"Choose N" uses repeat groups.** A pattern marks groups of nodes as repeatable (`repeat: [{id, label, nodes, mode, min, max, default}]` in `pattern.yaml`); an instance stores its chosen N per group (`repeat` on the pattern node). Choosing N never forks.
+- **Joins on pattern ports:** `portJoins` on the instance, one join mode per input port.
+- **Fork internals are edited in the pattern editor** on the fork branch (like **Edit fork** for agents), not inside the expanded frame. Expanded stays view state only.
+- **Overrides for agents inside instances** are keyed by node path (`review-k2f8/maker`).
+- **Every input port is required; output ports are optional.** No per-port setting in v1.
+- **Agent fork promotion is built in M5** too (merge to main as the next version, or save as a new agent), with the same flow as pattern forks. User decision.
+
+### Schema
+- **Node paths** (`NodePath`) name nodes inside instances: node ids joined by `/`, with `@k` for the k-th copy of a repeated node (`team@1/worker@2`). The first segment is always the node of the outer graph. They key slot bindings (relative to the pattern) and project overrides (relative to the workflow).
+- **Repeat group semantics** (`expandRepeats`):
+  - edges inside the group are copied per copy
+  - `parallel` (default): edges into and out of the group connect every copy (fan-out, fan-in); a decision exit leading into the group becomes one exit per copy (`worker@2`, "Worker 2") with the same cap
+  - `chain`: copy 1 gets the group's inputs, the last copy feeds its outputs, and copy k hands over to copy k+1 like the group's input edges describe (Pipeline)
+  - copied slots are numbered ("Worker 2"); counts are clamped to `min`..`max`
+- **Slots of nested patterns are slots of the outer pattern** under the nested node's path (`team@1/worker@2`). Inside a pattern, a nested instance's `slot` binding only renames a slot (role, description, default agent); concrete agents there are an error.
+- **Validation flattens instances** (`flattenWorkflow`, `checkWorkflow`): every instance is replaced by its repeat-expanded nodes with the bound agents filled in, so loops, joins, reachability and tool coverage work across pattern boundaries without new rule code. Problems are mapped back onto the instance (message prefixed "In <pattern>:"), with the inner paths kept for expanded views; fixes inside a pattern are dropped (they're fixed in the pattern), except a missing port join, fixed on the instance.
+- **A pattern is checked as it will be used:** in the pattern editor, repeat groups are expanded to their default size and problems on copies are mapped back to the template nodes. Otherwise the Router template ("one exit") would warn.
+- **New rules:** `slot-in-workflow`, `agent-in-pattern`, `unbound-slot`, `port-unconnected`, `unknown-port` (an edge to a port that doesn't exist or points the wrong way), `pattern-cycle` (blocks saving, like an endless loop), `repeat-invalid`, and `missing-ref` for patterns. An instance counts as unreachable only when all of it is.
+- **Reading a shared store doesn't form a loop** (`analyzeLoops`). An agent that writes the store and reads it back is not looping: a read is access to state, not a trigger. Same reasoning as the M4 join rule (PLAN.md 7.5). Found because Moderated discussion and Blackboard did this.
+- **Built-in patterns** are data in `packages/schema` (`BUILTIN_PATTERNS`) with fixed ids `<slug>-builtn`, so Restore defaults (M6) can recognise them. Routing decisions that follow an agent's choice (Supervisor, Hierarchy, Handoff, discussion, Blackboard) are deterministic: the agent ends its reply with `{"next": "<label>"}` and a few lines of Python print that exit. Router uses an agent evaluator (a slot), Maker-checker a deterministic verdict check. Loop caps: 5 per worker exit, 8 per discussion or blackboard turn exit, 3 for Maker-checker. No default agents: the demo agents arrive in M7.
+
+### Server
+- **The built-ins are seeded on startup, once:** each built-in that never existed in the library (no entity, version or branch with its id) is added, all in one commit (`Add the built-in patterns`) tagged `v1`. Deleting an entity keeps its version tags, so a deleted built-in is not brought back; that is Restore defaults (M6). No separate "seeded" marker is needed.
+- **Patterns are checked like workflows,** in pattern mode: saving is refused for an uncapped loop or a pattern containing itself, merging for any error. Save and merge load every pinned pattern recursively, so the checks see inside instances; merge also loads the agents and presets bound inside them.
+- **`repeat` is written to `pattern.yaml`** after the graph. Templates don't have it.
+- **Fork promotion needs no new endpoint:** merging a named branch (`POST …/merge {branch}`) already creates the next version and deletes the branch. **Save as new** is a create from the fork's content plus `DELETE …/branches/<fork>`. Re-pinning the instance is done by the editor.
+
+### Pattern editor (web)
+- **One canvas for projects and patterns** (`WorkflowEditor`, was `ProjectEditor`). It edits a `WorkflowDoc`, the same shape for both: a pattern's doc has empty overrides and workspace, a project's has no repeat groups. `toDoc`/`fromDoc` convert from and to the stored entity, so nothing extra is saved and unsaved-change detection stays exact.
+- **Project-only:** overrides, the workspace field, Save as template and the context preview (agents in a pattern are slots, so there is nothing concrete to preview).
+- **In a pattern, agent nodes are slots.** The palette shows **Slot**, which adds a slot with the role "Agent". In quick-add, picking an agent adds a slot named after it with that agent as its default. A slot's inspector has role, "what this role does" and an optional default agent. A decision's agent evaluator is a slot too ("Evaluating role", default "Router").
+- **Repeat groups:** a node joins or leaves a group from its **Repeat** field ("Exists once", an existing group, or "New repeat group…", named after the node, parallel, 1–9, default 2). The pattern panel (nothing selected) lists the groups with name, mode ("In parallel" / "One after another"), min, default and max. Removing a node removes it from its group, and an empty group is removed.
+- **On the canvas:** Input and Output nodes of a pattern carry a `port` chip, repeated nodes a `×2 Workers` chip, slots a dashed outline and a `slot` chip. Pattern instances (e.g. the Team inside Hierarchy) render collapsed, with a handle per port, their version (or `modified`) and, in a project, how many slots are bound. Inserting, binding and expanding them is the next step.
+- **Patterns tab:** cards like Projects (name, `built-in` badge, version, draft badge, the roles and port counts). **New pattern** asks for a name and description and starts with Input → one slot → Output. The canvas is at `/patterns/:id`; `?branch=` opens a fork.
+- The placeholder page is gone: Patterns was the last tab using it.
+
+### Inserting patterns
+- **Insert:** the palette's **Pattern…** entry (click or drag) and a **Patterns** group in quick-add. A dialog picks the pattern (skipped from quick-add), chooses N per repeat group (clamped to its range), and binds each slot to an agent, pre-selected from the slot's default. Inserting with unbound slots is allowed: the instance shows `0/2 slots bound` and merging is blocked until they are bound.
+- **New instances pin the pattern's current version, and bindings pin the agent's current version** (the M2 rule for new references).
+- **Placement follows the other nodes:** after the selected node, connected from its first free exit or output port into the instance's first input port.
+- **Inside a pattern there is no binding step:** a nested instance's slots stay open (they are the outer pattern's slots). A pattern can't be inserted into itself (it isn't offered).
+- **The instance inspector** shows the pinned pattern (with Open), "How many" per repeat group, a binding per slot (changing it never forks), and a Join per input port with several inputs. Lowering N drops the bindings of copies that no longer exist.
+- **Joins of an instance are per input port** (`portJoins`): the node-level join rule skips pattern nodes, and a collapsed instance shows `join?` next to a port that needs one.
+
+### Expand and collapse
+- **Expanded state is per browser (`localStorage`), not in `layout.json`.** This changes the M0 decision. Stored in the layout, expanding would count as an unsaved change, and looking inside a built-in pattern would create a draft. Expanding is view state only (PLAN.md 7.7), so it is never saved. `Layout.expanded` stays in the schema, unused.
+- **An expanded instance is a frame** (a React Flow parent node) holding its pattern's nodes, laid out from the pattern's own `layout.json`: copies of repeated nodes stack downwards, and what was below them moves down. Slots show the bound agents (from the flattened graph). The internals are read-only: not draggable, selectable or connectable. Editing them is Customize (fork).
+- **Ports sit on the frame:** the pattern's Input and Output nodes are drawn as pills on the frame's left and right edges, and external edges attach to them, so they visibly route through the ports to the nodes inside.
+- **Nested instances expand one level at a time;** collapsing a frame also collapses what was expanded inside it.
+- **Room is made, not saved:** while a frame is open, top-level nodes to its right move right and nodes below it move down. Dragging such a node saves its real (unshifted) position.
+- **Animation runs in JavaScript** (`requestAnimationFrame`, about 260 ms, ease in-out), not CSS: the frame size, the room around it and the contents' opacity are interpolated, so edges stay attached while things move. Reduced-motion users get no animation.
+- **Expand or collapse** with the button in the instance's header, or by double-clicking it.
+- **Quick-add matches patterns by name only** and lists them after tool steps. Their descriptions are prose that fuzzily matched unrelated searches (found by an M3 browser test).
+- **A collapsed instance keeps handles for the ports its edges use** while its pattern is still loading, so edges don't detach (this caused a burst of React Flow warnings on every load).
+
+### Forks and promotion
+- **Pattern instances fork like agents (M3):** **Customize for this project** (or "…for this pattern" for a nested instance) creates `fork-<container id>-<node id>` at the pinned version and pins it; slot bindings, counts and port joins are kept. **Edit fork** opens the pattern editor on that branch (`?branch=&back=`), headed "Pattern · project fork" with a back link and a banner; Delete is hidden there. **Use library version** pins the current main version again (the fork branch stays, unused).
+- **Promotion is in the node's inspector, for agent and pattern forks alike** (`PromoteFork`):
+  - **Merge to main:** an optional note, then `POST …/merge {branch}`. If main changed since the fork started, a dialog shows main and the fork side by side (the files, as for M2 conflicts) with **Merge anyway**; no line-by-line merge (PLAN.md 7.7). The node then pins the new version.
+  - **Save as new:** a name (default "<name> (custom)"), then the fork's content is created as a new entity (`v1`) and the fork branch is deleted. The node then pins the new entity. The original is unchanged.
+- **Promoting saves the project (or pattern) right away,** so it never pins a branch that no longer exists. To avoid saving unrelated edits by surprise, promotion is disabled while there are unsaved changes ("Save first").
+- **Other users of the promoted entity are not touched:** they keep their pinned version. The cascade preview that offers to move them is M6.
+- **Agents inside an expanded instance can be selected (in a project)** to set their project overrides (model, effort, limits), keyed by node path (`review-k2f8/maker`); the bound agent itself is changed on the instance. They can't be moved, deleted or connected. Collapsing a frame drops selections inside it.
+
+### Tests (2026-11-05, M5)
+- **Browser tests** (`e2e/patterns.spec.ts`): the M5 done-when flow end to end (insert, bind, expand, overrides inside, collapse, fork, edit, promote as v2 with a note); a pattern built by hand with a repeat group, merged and used with 3 copies; nested expansion in Hierarchy; a pattern inside a pattern.
+- **The tests share one library per run,** so the nested-insert test reads Maker-checker's current version instead of assuming `v1` (the done-when test promotes `v2`).
+
+### M5 review answers (2026-11-05, user decisions)
+- Fix the crossing store edges in the Moderated discussion and Blackboard built-in layouts: M7 (polish).
+- Templates that pin a fork branch that was promoted (and so deleted): handle in M6 with references and deletion.
+- Context preview for agents inside pattern instances: v2 (`V2_BACKLOG.md`).
+- Unused fork branches left by "Use library version": M6, with deleting forks.

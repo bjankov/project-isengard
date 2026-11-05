@@ -23,6 +23,11 @@ Add to this file whenever something is deferred. `PLAN.md` stays the source of t
 - **Joins** `all` / `any` / `n-of-m` and the loop-edge `history` toggle (`latest` / `all`).
   - Loop-back edges and shared-store reads don't count as join inputs: an edge coming back round a loop re-runs its target with the latest of its other inputs (PLAN.md 7.5, agreed in M4).
 - **`onExhausted`** on a capped decision exit: `halt` (stop and ask a human, the default) or take another exit of the same decision.
+- **Pattern instances** (agreed in M5): a run uses the instance's flattened graph (`flattenWorkflow`):
+  - repeat groups copied N times: `parallel` copies all get the group's inputs (and a decision exit into the group becomes one exit per copy, each with the cap); `chain` copies run one after another
+  - an input port with several incoming edges waits as its `portJoins` entry says
+  - content entering through a port goes through the external edge's context mode, then the inner edge's (both apply, in that order)
+  - slots are filled by the outermost instance's bindings; overrides are keyed by node path
 
 ### Other v2 features (PLAN.md 3.2)
 - Workspace rollback via git checkpoints during runs. The workspace is already required to be a git repo for this.
@@ -40,6 +45,8 @@ Add to this file whenever something is deferred. `PLAN.md` stays the source of t
 | 2026-11-04 | M1 | Drag-to-reorder an agent's skills and tools | No functional effect in v1. In v2 the order decides how they appear in the agent's context. The order is already stored (arrays), so no schema change is needed. |
 | 2026-11-04 | M1 | Skill folder names when handing skills to an agent runtime | The Agent Skills format expects the folder name to match `name`. Library folders are named by id (`<slug>-<suffix>`), so v2 should write correctly named folders when it gives skills to an agent. |
 | 2026-11-04 | M2 | Canvas autosave | PLAN.md 9.3 originally had autosave of the draft branch. Dropped for v1 in favour of explicit Save, for consistency with every other editor and a clean git history. If added in v2, decide how often it commits (e.g. after a few idle seconds) and group autosaves in the history. |
+| 2026-11-05 | M5 | Workspace repo root shown in symlink-resolved form | When a typed workspace path is inside a repo and goes through a symlink (macOS `/tmp`, `/var`; user links like `~/code` → `/Volumes/Dev/code`), "Use <repo root>" shows and stores git's resolved path (`/private/tmp/app`) instead of the typed form. Cosmetic: the check itself compares resolved paths and is correct. Fix before release by mapping git's root back to the typed path. Only the test was fixed for now. |
+| 2026-11-05 | M5 | Context preview for agents inside pattern instances | The preview covers agents in the workflow's own graph. Inside an instance it would show the bound agent with the project's overrides for its path and the inputs as the flattened graph delivers them. User decision: v2; until then a pattern can stay a bit of a black box. |
 
 ## Open questions for v2
 - How should a skill's `allowed-tools` frontmatter interact with the agent's tool presets? Ignore it, warn when they disagree, or intersect the two? In v1, tool access comes only from presets.

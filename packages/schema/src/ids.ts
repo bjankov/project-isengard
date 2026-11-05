@@ -85,3 +85,30 @@ export const LocalId = z
   .max(64)
   .regex(/^[A-Za-z0-9_-]+$/, 'local ids may contain letters, digits, "_" and "-"');
 export type LocalId = z.infer<typeof LocalId>;
+
+const PATH_SEGMENT = '[A-Za-z0-9_-]+(?:@[1-9][0-9]*)?';
+
+/**
+ * A node inside pattern instances, as a path of node ids from the outermost graph:
+ * `review-k2f8/maker`, or `team-a1b2/worker@2` for the 2nd copy of a repeated node. A plain
+ * `LocalId` is a path of one segment. Used for slot bindings (relative to the pattern) and
+ * project overrides (relative to the workflow).
+ */
+export const NodePath = z
+  .string()
+  .max(400)
+  .regex(
+    new RegExp(`^${PATH_SEGMENT}(?:/${PATH_SEGMENT})*$`),
+    'expected node ids joined by "/", e.g. "review-k2f8/maker" or "team-a1b2/worker@2"',
+  );
+export type NodePath = z.infer<typeof NodePath>;
+
+/** Path of the `copy`-th copy (1-based) of a node in a repeat group, e.g. `worker@2`. */
+export function copyId(id: string, copy: number): string {
+  return `${id}@${String(copy)}`;
+}
+
+/** Path of a node inside an instance: `<instance path>/<inner id>`. */
+export function joinPath(prefix: string, id: string): string {
+  return prefix ? `${prefix}/${id}` : id;
+}

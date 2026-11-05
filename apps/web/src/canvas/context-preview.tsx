@@ -39,7 +39,7 @@ import { cn } from '@/lib/utils';
 import { usePinned } from '@/stores/pinned';
 import { useSettings } from '@/stores/settings';
 import { describeIncoming, incomingEdges, type IncomingDescription } from './describe-context';
-import type { ProjectDoc } from './doc';
+import type { WorkflowDoc } from './doc';
 import { ProblemIcon } from './problems-panel';
 import type { WorkflowCheck } from './use-workflow-check';
 
@@ -67,7 +67,7 @@ export function ContextPreview({
 }: {
   nodeId: string | null;
   onOpenChange: (open: boolean) => void;
-  doc: ProjectDoc;
+  doc: WorkflowDoc;
   loops: LoopAnalysis;
   check: WorkflowCheck;
 }) {
@@ -132,7 +132,7 @@ function PreviewBody({
   check,
 }: {
   nodeId: string;
-  doc: ProjectDoc;
+  doc: WorkflowDoc;
   loops: LoopAnalysis;
   check: WorkflowCheck;
 }) {

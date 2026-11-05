@@ -1,8 +1,18 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  BUILTIN_PATTERNS,
+  BUILTIN_PATTERN_IDS,
   ENTITY_KINDS,
   KIND_PLURALS,
   type EntityKind,
@@ -56,7 +66,10 @@ function listAll(): Promise<Record<EntityKind, EntityListItem[]>> {
   return Promise.all(
     ENTITY_KINDS.map(async (k) => [
       k,
-      (await api<{ items: EntityListItem[] }>('GET', `/api/${KIND_PLURALS[k]}`)).body.items,
+      // Built-in patterns are seeded into every library; they have their own tests.
+      (await api<{ items: EntityListItem[] }>('GET', `/api/${KIND_PLURALS[k]}`)).body.items.filter(
+        (item) => !isBuiltinPattern(item.id),
+      ),
     ]),
   ).then(Object.fromEntries);
 }
@@ -64,7 +77,8 @@ function listAll(): Promise<Record<EntityKind, EntityListItem[]>> {
 let workspace: string;
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'app-test-'));
+  // Resolve symlinks (macOS: /var -> /private/var) so paths match what git reports.
+  home = realpathSync(mkdtempSync(join(tmpdir(), 'app-test-')));
   config = loadConfig({ APP_HOME: home });
   workspace = join(home, 'workspace');
   mkdirSync(workspace);
@@ -99,11 +113,16 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
+const isBuiltinPattern = (id: string) =>
+  (Object.values(BUILTIN_PATTERN_IDS) as string[]).includes(id);
+
 describe('startup', () => {
   it('initializes the library store as a git repo with one commit per kind folder', async () => {
     await start();
     expect(git('rev-parse', '--abbrev-ref', 'HEAD').trim()).toBe('main');
-    expect(git('log', '--format=%s').trim()).toBe('Add default settings\nInitialize library store');
+    expect(git('log', '--format=%s').trim()).toBe(
+      'Add the built-in patterns\nAdd default settings\nInitialize library store',
+    );
     for (const dir of ['skills', 'tools', 'agents', 'patterns', 'templates', 'projects']) {
       expect(existsSync(join(config.libraryDir, dir, '.gitkeep'))).toBe(true);
     }
@@ -116,7 +135,34 @@ describe('startup', () => {
     await start();
     await stop();
     await start();
-    expect(git('rev-list', '--count', 'HEAD').trim()).toBe('2');
+    expect(git('rev-list', '--count', 'HEAD').trim()).toBe('3');
+  });
+
+  it('seeds the 10 built-in patterns as v1, and doesn’t bring back a deleted one', async () => {
+    await start();
+    const items = (await api<{ items: EntityListItem[] }>('GET', '/api/patterns')).body.items;
+    expect(items.map((p) => p.id).sort()).toEqual(Object.values(BUILTIN_PATTERN_IDS).sort());
+    expect(items.every((p) => p.version === 'v1' && !p.hasDraft)).toBe(true);
+    const hierarchy = await api<{ workflow: { nodes: { type: string }[] }; repeat: unknown[] }>(
+      'GET',
+      `/api/patterns/${BUILTIN_PATTERN_IDS.hierarchy}`,
+    );
+    expect(hierarchy.body.workflow.nodes.some((n) => n.type === 'pattern')).toBe(true);
+    expect(hierarchy.body.repeat).toHaveLength(1);
+    expect(
+      readFileSync(
+        join(config.libraryDir, 'patterns', BUILTIN_PATTERN_IDS.pipeline, 'pattern.yaml'),
+        'utf8',
+      ),
+    ).toContain('mode: chain');
+
+    const removed = await api('DELETE', `/api/patterns/${BUILTIN_PATTERN_IDS.makerChecker}`);
+    expect(removed.status).toBe(200);
+    await stop();
+    await start();
+    const after = (await api<{ items: EntityListItem[] }>('GET', '/api/patterns')).body.items;
+    expect(after.map((p) => p.id)).not.toContain(BUILTIN_PATTERN_IDS.makerChecker);
+    expect(after).toHaveLength(9);
   });
 
   it('reports a clear error when git is missing', async () => {
@@ -248,8 +294,8 @@ describe.each(ENTITY_KINDS)('CRUD for %s', (kind) => {
     expect((await api('GET', `/api/${plural}/${id}`)).status).toBe(404);
     expect((await listAll())[kind]).toEqual([]);
     expect(git('status', '--porcelain').trim()).toBe('');
-    // init + settings + create + draft update + merge + delete
-    expect(git('rev-list', '--count', 'HEAD').trim()).toBe('6');
+    // init + settings + built-in patterns + create + draft update + merge + delete
+    expect(git('rev-list', '--count', 'HEAD').trim()).toBe('7');
     // version tags stay in history
     expect(git('tag', '--list', `${kind}/${id}/*`).trim().split('\n')).toEqual([
       `${kind}/${id}/v1`,
@@ -268,7 +314,7 @@ describe('API errors', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('validation');
     expect(res.body.issues.map((i) => i.path.join('.'))).toContain('defaults.effort');
-    expect(git('rev-list', '--count', 'HEAD').trim()).toBe('2');
+    expect(git('rev-list', '--count', 'HEAD').trim()).toBe('3');
     expect(git('status', '--porcelain').trim()).toBe('');
   });
 
@@ -302,7 +348,7 @@ describe('API errors', () => {
       ),
     );
     expect(results.every((r) => r.status === 201)).toBe(true);
-    expect(git('rev-list', '--count', 'HEAD').trim()).toBe('10');
+    expect(git('rev-list', '--count', 'HEAD').trim()).toBe('11');
     expect((await listAll()).tool).toHaveLength(8);
   });
 });
@@ -422,7 +468,7 @@ describe('index', () => {
       '/api/index/rebuild',
     );
     expect(res.status).toBe(200);
-    expect(res.body.entities).toBe(6);
+    expect(res.body.entities).toBe(6 + BUILTIN_PATTERNS.length);
     expect(res.body.invalid).toEqual([]);
     expect(await listAll()).toEqual(before);
   });
@@ -451,7 +497,7 @@ describe('index', () => {
       'POST',
       '/api/index/rebuild',
     );
-    expect(res.body.entities).toBe(6);
+    expect(res.body.entities).toBe(6 + BUILTIN_PATTERNS.length);
     expect(res.body.invalid).toMatchObject([{ kind: 'agent', id: 'broken-aaaaaa' }]);
   });
 });
@@ -1152,5 +1198,162 @@ describe('workflow checks', () => {
     const merged = await api<{ version: string }>('POST', `/api/projects/${id}/merge`);
     expect(merged.status).toBe(200);
     expect(merged.body.version).toBe('v2');
+  });
+});
+
+describe('patterns', () => {
+  const MC = BUILTIN_PATTERN_IDS.makerChecker;
+  const edge = (id: string, source: object, target: object) => ({
+    id,
+    source,
+    target,
+    payload: 'text',
+    context: { mode: 'full' },
+  });
+  /** Task → Maker-checker → Result, with the given slot bindings. */
+  const withInstance = (bindings: Record<string, unknown>) => ({
+    ...sampleInput('project'),
+    overrides: {},
+    workflow: {
+      nodes: [
+        ...MINIMAL_WORKFLOW.nodes,
+        {
+          id: 'mc',
+          type: 'pattern',
+          pattern: { kind: 'pattern', id: MC, version: 'v1' },
+          bindings,
+        },
+      ],
+      edges: [
+        edge('e1', { node: 'in' }, { node: 'mc', port: 'in' }),
+        edge('e2', { node: 'mc', port: 'out' }, { node: 'out' }),
+      ],
+    },
+    layout: { nodes: {} },
+  });
+
+  it('merges a project only once every slot of its instances is bound', async () => {
+    await start();
+    const created = await api<{ entity: { id: string } }>('POST', '/api/projects', {
+      ...sampleInput('project'),
+      workflow: MINIMAL_WORKFLOW,
+    });
+    const id = created.body.entity.id;
+    // Unbound slots don't block saving…
+    expect((await api('PUT', `/api/projects/${id}`, withInstance({}))).status).toBe(200);
+    // …but they block merging.
+    const refused = await api<{ problems: { rule: string; nodes: string[] }[] }>(
+      'POST',
+      `/api/projects/${id}/merge`,
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.body.problems).toMatchObject([{ rule: 'unbound-slot', nodes: ['mc'] }]);
+
+    const agent = await api<{ entity: { id: string } }>('POST', '/api/agents', {
+      ...sampleAgent,
+      skills: [],
+      tools: [],
+    });
+    const ref = {
+      kind: 'agent',
+      agent: { kind: 'agent', id: agent.body.entity.id, version: 'v1' },
+    };
+    await api('PUT', `/api/projects/${id}`, withInstance({ maker: ref, checker: ref }));
+    const merged = await api<{ version: string }>('POST', `/api/projects/${id}/merge`);
+    expect(merged.status).toBe(200);
+    expect(merged.body.version).toBe('v2');
+  });
+
+  it('refuses to save a pattern that contains itself', async () => {
+    await start();
+    const mc = (
+      await api<{ workflow: { nodes: unknown[]; edges: unknown[] } }>('GET', `/api/patterns/${MC}`)
+    ).body;
+    const nested = structuredClone(mc);
+    nested.workflow.nodes.push({
+      id: 'again',
+      type: 'pattern',
+      pattern: { kind: 'pattern', id: MC, version: 'v1' },
+    });
+    nested.workflow.edges.push(edge('x', { node: 'checker' }, { node: 'again', port: 'in' }));
+    const res = await api<{ error: string; problems: { rule: string }[] }>(
+      'PUT',
+      `/api/patterns/${MC}`,
+      nested,
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.problems.map((p) => p.rule)).toEqual(['pattern-cycle']);
+  });
+
+  it('refuses to merge a pattern with errors', async () => {
+    await start();
+    const mc = (await api<{ workflow: { edges: { id: string }[] } }>('GET', `/api/patterns/${MC}`))
+      .body;
+    const broken = structuredClone(mc);
+    broken.workflow.edges = broken.workflow.edges.filter((e) => e.id !== 'e-approved-yes-out');
+    expect((await api('PUT', `/api/patterns/${MC}`, broken)).status).toBe(200);
+    const res = await api<{ message: string; problems: { rule: string }[] }>(
+      'POST',
+      `/api/patterns/${MC}/merge`,
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/in the pattern/);
+    expect(res.body.problems.map((p) => p.rule)).toContain('exit-unconnected');
+  });
+
+  it('promotes a fork: merge to main as the next version, or save as a new entity', async () => {
+    await start();
+    const agent = await api<{ entity: { id: string } }>('POST', '/api/agents', {
+      ...sampleAgent,
+      skills: [],
+      tools: [],
+    });
+    for (const [plural, id] of [
+      ['patterns', MC],
+      ['agents', agent.body.entity.id],
+    ] as const) {
+      // Fork, edit on the fork branch, merge it: v2, and the fork branch is gone.
+      const branch = 'fork-demo-aaaaaa-mc';
+      expect(
+        (await api('POST', `/api/${plural}/${id}/branches`, { name: branch, from: 'v1' })).status,
+      ).toBe(201);
+      const original = (await api<Record<string, unknown>>('GET', `/api/${plural}/${id}`)).body;
+      await api('PUT', `/api/${plural}/${id}?branch=${branch}`, {
+        ...original,
+        description: 'Forked',
+      });
+      const merged = await api<{ version: string; status: VersionStatus }>(
+        'POST',
+        `/api/${plural}/${id}/merge`,
+        { branch },
+      );
+      expect(merged.status).toBe(200);
+      expect(merged.body.version).toBe('v2');
+      expect(merged.body.status.branches).toEqual([]);
+
+      // Save as new: the fork's content becomes a new entity (v1); the fork branch is deleted.
+      const second = 'fork-demo-aaaaaa-mc2';
+      await api('POST', `/api/${plural}/${id}/branches`, { name: second, from: 'v2' });
+      await api('PUT', `/api/${plural}/${id}?branch=${second}`, {
+        ...original,
+        name: 'My review loop',
+      });
+      const fork = (await api<Record<string, unknown>>('GET', `/api/${plural}/${id}?ref=${second}`))
+        .body;
+      const copy = await api<{ entity: { id: string; name: string }; status: VersionStatus }>(
+        'POST',
+        `/api/${plural}`,
+        { ...fork, id: undefined },
+      );
+      expect(copy.status).toBe(201);
+      expect(copy.body.entity.name).toBe('My review loop');
+      expect(copy.body.status.current).toBe('v1');
+      const dropped = await api<{ status: VersionStatus }>(
+        'DELETE',
+        `/api/${plural}/${id}/branches/${second}`,
+      );
+      expect(dropped.status).toBe(200);
+      expect(dropped.body.status.branches).toEqual([]);
+    }
   });
 });
