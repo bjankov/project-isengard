@@ -216,3 +216,68 @@ Format: date, milestone, decision, reason.
 - **The folder is created in the same request as the project** (`POST /api/projects?createWorkspace=1`). The server validates the project first, then creates the folder and runs `git init`, then creates the project. A rejected project never leaves a folder behind.
 - **The last location is remembered per browser** (`localStorage`), defaulting to `~/`. Reason: a convenience, not data worth versioning in Settings.
 - `git init` is the only thing run in the new folder. No files or commits are added.
+
+## 2026-11-05 (M4)
+
+### Agreed at planning (user decisions)
+- **Loops:** every loop must pass through a decision exit with Max loops. Once the capped exits are taken out, nothing may still go round in a circle.
+  - A loop without any decision (agent → agent → back) is not allowed, because nothing could stop it.
+  - Uncapped loops block **saving and merging**, in the UI and on the server.
+  - The user first asked for agent → agent loops capped on the agent, then withdrew that: a decision can use an agent as its evaluator, so a decision covers that case. All 10 built-in patterns already loop through a decision. In four of them (Supervisor, Handoff, Moderated discussion, Blackboard) the edge that closes the loop runs agent → agent, and the cap sits on the decision exit inside the loop. The rule handles that correctly.
+  - PLAN.md 7.4 updated.
+- **Errors block merging; only uncapped loops block saving.** Work in progress can always be saved, but a version on `main` must be complete. Warnings block neither. The server checks both (`400 workflow` with `problems`). Merging runs every rule, including those that need the library (tool coverage, missing references). PLAN.md 9.5 updated.
+- **Join inputs:**
+  - loop-back edges and reads from a shared store don't count as join inputs: a loop-back re-runs its target with the latest of its other inputs, and a store read is access, not a trigger
+  - shared stores never need a join
+  - there is no automatic default: a second input shows an error with a one-click **Wait for all inputs** fix
+  - PLAN.md 7.5 updated; v2 semantics added to `V2_BACKLOG.md`
+- **The pattern rule** (unconnected port, unbound slot) moves to M5, when patterns can be placed.
+- **Glob coverage** uses `picomatch` (the one new dependency, in `@app/schema`).
+  - A literal path is covered when a tool glob matches it.
+  - A glob path (e.g. an artifact `src/**`) is covered only when containment is clear: the same glob, `**`, or a `dir/**` above it.
+  - Anything else counts as not covered, and the message lists the tool's globs.
+
+### Validation
+- **One pure function, `validateWorkflow(graph, resolver?)`** in `packages/schema`, used by the canvas (on every change) and by the server.
+  - Without a resolver it runs the graph rules only; that is what the server uses on save.
+  - The resolver supplies pinned agents and tool presets. While one is still loading (`undefined`), the rules that need it are skipped instead of guessing.
+- **Rules:**
+  - the PLAN.md 9.5 list (except patterns)
+  - `no-input`, `join-too-large`, `single-exit` (warning), `exhausted-exit` (the `onExhausted` exit no longer exists), `evaluator-incomplete` (warning: no code, criteria or reviewer instructions yet), `missing-ref` (pinned agent or preset no longer exists)
+  - `reference-not-file`: reference mode from something that isn't a workspace file
+- **Which edge a reference or write checks:**
+  - reference mode traces back through decisions to the content they pass through; an Artifact's path or an Input's attached files are what must be readable
+  - the read tool is `read_file`; writes need `write_file` or `edit_file`
+  - evaluator agents count as receivers for reference mode
+- **Problems have stable ids, the affected nodes and edges, the place to jump to, and an optional fix** (`join-all`, `cap-exit` at 3 loops), applied with `applyFix`.
+
+### UI
+- **Problems bar** under the canvas:
+  - error and warning counts, and what is blocked
+  - expands to the list; clicking a problem selects it and zooms to it
+  - fixes are buttons
+- **On the canvas:**
+  - red or amber outlines and a corner marker on nodes (the messages show as a tooltip)
+  - red edges for errors
+  - the `max N` badge sits on the capped exit edge, `no cap` on the edge reported for an uncapped loop
+  - a join chip (`join all`, `join 2 of 3`, red `join?`) on nodes with several inputs
+- **The inspector** lists the selected item's problems at the top. Nodes with several inputs get a Join field (Wait for all / Any one / Some, with N).
+- **Merge** is disabled with an explanation while there are errors. Saving with an uncapped loop is refused with a toast, and the problem is selected.
+- **Decision editor:**
+  - Monaco Python editor with a language select (Python only) and an Expand dialog
+  - **Load file…** and drag and drop of `.py` files, at most 256 KB; `sourceFileName` is kept and shown
+  - Monaco would take the drop and insert the path, so the drop is caught in the capture phase
+- **Exits** can be reordered (the first is exit code 0). A capped exit has **When the cap is hit**: stop and ask a human (`halt`, the default) or take another exit. Clearing a cap clears it.
+- **Switching the evaluator type** swaps the exits only while they are the old type's untouched defaults and unconnected: deterministic `pass/fail`, human `approve/reject`; agent keeps the current ones.
+- **Context preview** opens from the agent inspector, or with `P` on a selected agent node, as a side panel:
+  - header: version or fork, model, effort and limits, with project overrides highlighted
+  - 1 prompt, 2 skills (expandable bodies), 3 tools with scopes, 4 inputs
+  - each input is one line in plain words from `describe-context.ts` (unit tested); loop inputs show their history, and related problems show inline
+  - no file contents (the app doesn't read workspaces) and no token figures
+- **The e2e reload check** in the M3 demo test now compares screenshots with a small tolerance (≤ 200 pixels, ≤ 64/255 each), because problem outlines and long thin edges antialias slightly differently depending on when they render. Node positions and problem markers are still compared exactly through the DOM.
+
+### M4 review answers (2026-11-05, user decisions)
+- Projects from M3 with an uncapped loop stay unsaveable until capped (the fix is offered). No migration.
+- Unclear glob coverage stays an **error**, not a "can't confirm" warning. To revisit later.
+- Moving toasts away from the problems bar is polish for M7.
+- A context preview for evaluator agents in decisions is deferred (not scheduled yet).

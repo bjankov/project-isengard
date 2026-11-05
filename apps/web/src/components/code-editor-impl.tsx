@@ -34,7 +34,7 @@ export default function CodeEditorImpl({
         hideCursorInOverviewRuler: true,
         scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10 },
         automaticLayout: true,
-        tabSize: 2,
+        tabSize: language === 'python' ? 4 : 2,
         quickSuggestions: false,
         wordBasedSuggestions: 'off',
       }}

@@ -7,7 +7,7 @@ import {
   type Limits,
   type Settings,
 } from '@app/schema';
-import { GitFork, Loader2, Sparkles } from 'lucide-react';
+import { GitFork, Loader2, ScanEye, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { toast } from 'sonner';
@@ -39,6 +39,7 @@ import { usePinned } from '@/stores/pinned';
 import { useEntities, useVersions } from '@/stores/library';
 import { updateNode, type Change, type ProjectDoc } from './doc';
 import { OptionalNumber } from './fields';
+import { Kbd } from './kbd';
 
 const INHERIT = '__inherit__';
 
@@ -71,12 +72,14 @@ export function AgentInspector({
   doc,
   change,
   settings,
+  onPreview,
 }: {
   projectId: string;
   nodeId: string;
   doc: ProjectDoc;
   change: Change;
   settings: Settings | undefined;
+  onPreview: () => void;
 }) {
   const node = doc.workflow.nodes.find((n) => n.id === nodeId);
   const ref =
@@ -132,6 +135,11 @@ export function AgentInspector({
 
   return (
     <div className="space-y-6">
+      <Button variant="secondary" className="w-full justify-start" onClick={onPreview}>
+        <ScanEye />
+        Context preview
+        <Kbd className="ml-auto">P</Kbd>
+      </Button>
       <Field label="Agent" htmlFor="node-agent">
         <Select
           value={ref.id}

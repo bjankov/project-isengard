@@ -2,11 +2,16 @@ import {
   NODE_TYPE_INFO,
   analyzeLoops,
   inferPayload,
+  joinInputs,
   newLocalId,
+  withEvaluator,
+  type JoinMode,
+  type WorkflowProblem,
   type ArtifactFileType,
   type BuiltinToolId,
   type ContextMode,
   type ContextModeName,
+  type DecisionExit,
   type Evaluator,
   type PayloadType,
   type Settings,
@@ -14,7 +19,7 @@ import {
   type WorkflowNode,
   type WorkspaceCheck,
 } from '@app/schema';
-import { Plus, RotateCcw, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import { ModelSelect } from '@/components/agent-defaults';
 import { Field } from '@/components/field';
 import { Button } from '@/components/ui/button';
@@ -28,7 +33,10 @@ import { useEntities, useVersions } from '@/stores/library';
 import { AgentInspector } from './agent-inspector';
 import { nodeTitle, updateEdge, updateNode, type Change, type ProjectDoc } from './doc';
 import { EnumSelect, OptionalNumber, StringList } from './fields';
+import { EvaluatorCode } from './evaluator-code';
 import { NODE_META } from './node-meta';
+import { ProblemRow } from './problems-panel';
+import type { WorkflowCheck } from './use-workflow-check';
 
 export interface Selection {
   nodes: string[];
@@ -44,6 +52,10 @@ interface InspectorProps {
   errors: FieldErrors;
   onDeleteSelection: () => void;
   onWorkspaceCheck: (check: WorkspaceCheck | undefined) => void;
+  check: WorkflowCheck;
+  onFix: (problem: WorkflowProblem) => void;
+  /** Open the context preview of an agent node. */
+  onPreview: (nodeId: string) => void;
 }
 
 const PAYLOADS: { value: PayloadType; label: string }[] = [
@@ -166,6 +178,68 @@ export function Inspector(props: InspectorProps) {
   );
 }
 
+/** The problems of the selected node or edge, at the top of its panel. */
+function ItemProblems({
+  problems,
+  onFix,
+}: {
+  problems: WorkflowProblem[];
+  onFix: (p: WorkflowProblem) => void;
+}) {
+  if (problems.length === 0) return null;
+  return (
+    <ul
+      className="space-y-0.5 rounded-md border border-dashed bg-muted/30 p-1"
+      aria-label="Problems here"
+    >
+      {problems.map((p) => (
+        <ProblemRow key={p.id} problem={p} onFix={onFix} compact />
+      ))}
+    </ul>
+  );
+}
+
+/** How a node with several inputs waits for them (PLAN.md 7.5). */
+function JoinField({ node, inputs, set }: { node: WorkflowNode; inputs: number; set: SetNode }) {
+  const join = node.join;
+  const setJoin = (j: JoinMode) => set((n) => ({ ...n, join: j }), 'join');
+  return (
+    <Field
+      label="Join"
+      hint={`${inputs} inputs arrive here. A loop’s way back and reads from a shared store don’t count: they never start the node on their own.`}
+    >
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        size="sm"
+        value={join?.mode ?? ''}
+        onValueChange={(v) => {
+          if (v === 'all' || v === 'any') setJoin({ mode: v });
+          else if (v === 'n-of-m') setJoin({ mode: 'n-of-m', n: Math.min(2, inputs) });
+        }}
+        aria-label="Join mode"
+      >
+        <ToggleGroupItem value="all">Wait for all</ToggleGroupItem>
+        <ToggleGroupItem value="any">Any one</ToggleGroupItem>
+        <ToggleGroupItem value="n-of-m">Some</ToggleGroupItem>
+      </ToggleGroup>
+      {join?.mode === 'n-of-m' && (
+        <div className="flex items-center gap-2 text-sm">
+          Proceed when
+          <OptionalNumber
+            value={join.n}
+            className="h-8 w-16"
+            aria-label="Inputs needed"
+            onChange={(n) => n !== undefined && setJoin({ mode: 'n-of-m', n })}
+          />
+          of {inputs} inputs arrived
+        </div>
+      )}
+      {!join && <p className="text-xs text-destructive">Choose how this node waits.</p>}
+    </Field>
+  );
+}
+
 // ---- Project ----
 
 function ProjectPanel({ doc, change, errors, onWorkspaceCheck }: InspectorProps) {
@@ -230,6 +304,7 @@ function NodePanel(props: InspectorProps & { node: WorkflowNode }) {
   const set = (fn: (n: WorkflowNode) => WorkflowNode, key: string) =>
     change((d) => updateNode(d, node.id, fn), `node:${node.id}:${key}`);
   const agentNames = Object.fromEntries((useEntities('agent') ?? []).map((a) => [a.id, a.name]));
+  const inputs = joinInputs(doc.workflow, node.id).length;
 
   return (
     <>
@@ -246,6 +321,11 @@ function NodePanel(props: InspectorProps & { node: WorkflowNode }) {
         onDelete={props.onDeleteSelection}
       />
       <div className="flex-1 space-y-4 overflow-y-auto p-4" key={node.id}>
+        <ItemProblems
+          problems={props.check.problems.filter((p) => p.nodes.includes(node.id))}
+          onFix={props.onFix}
+        />
+        {inputs > 1 && <JoinField node={node} inputs={inputs} set={set} />}
         {node.type !== 'note' && (
           <Field
             label={node.type === 'decision' ? 'Question' : 'Label'}
@@ -340,6 +420,7 @@ function NodePanel(props: InspectorProps & { node: WorkflowNode }) {
             doc={doc}
             change={change}
             settings={settings}
+            onPreview={() => props.onPreview(node.id)}
           />
         )}
 
@@ -600,6 +681,16 @@ function DecisionFields({
   const ev = node.evaluator;
   const setEvaluator = (evaluator: Evaluator, key: string) =>
     set((n) => (n.type === 'decision' ? { ...n, evaluator } : n), key);
+  /** Switching the type also swaps exits that are still the old type's untouched defaults. */
+  const switchEvaluator = (evaluator: Evaluator) =>
+    set(
+      (n) => (n.type === 'decision' ? withEvaluator(doc.workflow, n, evaluator) : n),
+      'evaluator',
+    );
+  const setExits = (fn: (exits: DecisionExit[]) => DecisionExit[], key: string) =>
+    set((n) => (n.type === 'decision' ? { ...n, exits: fn(n.exits) } : n), key);
+  const setExit = (id: string, patch: Partial<DecisionExit>, key: string) =>
+    setExits((xs) => xs.map((y) => (y.id === id ? { ...y, ...patch } : y)), `exit:${id}:${key}`);
   const firstAgent = agents?.[0];
 
   return (
@@ -619,41 +710,28 @@ function DecisionFields({
           ]}
           onChange={(type) => {
             if (type === ev.type) return;
-            if (type === 'deterministic')
-              setEvaluator({ type, language: 'python', code: '' }, 'evaluator');
+            if (type === 'deterministic') switchEvaluator({ type, language: 'python', code: '' });
             else if (type === 'human')
-              setEvaluator({ type, instructions: '', allowFeedback: true }, 'evaluator');
+              switchEvaluator({ type, instructions: '', allowFeedback: true });
             else if (firstAgent)
-              setEvaluator(
-                {
-                  type,
-                  criteria: '',
-                  agent: {
-                    kind: 'agent',
-                    agent: { kind: 'agent', id: firstAgent.id, version: pinOf(firstAgent.id) },
-                  },
+              switchEvaluator({
+                type,
+                criteria: '',
+                agent: {
+                  kind: 'agent',
+                  agent: { kind: 'agent', id: firstAgent.id, version: pinOf(firstAgent.id) },
                 },
-                'evaluator',
-              );
+              });
           }}
         />
       </Field>
 
       {ev.type === 'deterministic' && (
-        <Field
-          label="Code (Python)"
-          htmlFor="node-code"
-          hint="Runs in v2, never in this version. It receives the decision’s input; exit code 0 picks the first exit, non-zero the second. Optional JSON on stdout adds notes or picks an exit by label."
-        >
-          <Textarea
-            id="node-code"
-            value={ev.code}
-            rows={6}
-            className="font-mono text-xs"
-            placeholder={'import sys\nsys.exit(0)'}
-            onChange={(e) => setEvaluator({ ...ev, code: e.target.value }, 'code')}
-          />
-        </Field>
+        <EvaluatorCode
+          evaluator={ev}
+          onChange={(next, key) => setEvaluator(next, key)}
+          error={err('evaluator.code')}
+        />
       )}
       {ev.type === 'agent' && ev.agent.kind === 'agent' && (
         <>
@@ -673,7 +751,11 @@ function DecisionFields({
               }
             />
           </Field>
-          <Field label="Criteria" htmlFor="node-criteria">
+          <Field
+            label="Criteria"
+            htmlFor="node-criteria"
+            hint="What the agent judges. It answers with one of the exit labels below, e.g. a router choosing bug / feature / question."
+          >
             <Textarea
               id="node-criteria"
               value={ev.criteria}
@@ -709,57 +791,81 @@ function DecisionFields({
 
       <Field
         label="Exits"
-        hint="Each exit is a handle on the node. Exits that loop back need a cap."
+        hint={
+          ev.type === 'deterministic'
+            ? 'Exit code 0 takes the first exit, any other code the second. Each exit is a handle on the node.'
+            : 'Each exit is a handle on the node. Every loop needs a cap on one of its exits.'
+        }
         error={err('exits')}
       >
         <div className="space-y-2">
-          <div className="grid grid-cols-[1fr_6rem_2rem] gap-2 text-[11px] font-medium text-muted-foreground">
+          <div className="grid grid-cols-[1.5rem_1fr_5.5rem_2rem] gap-2 text-[11px] font-medium text-muted-foreground">
+            <span />
             <span>Label</span>
             <span>Max loops</span>
             <span />
           </div>
           {node.exits.map((x, i) => {
-            const loopsBack = doc.workflow.edges.some(
-              (e) =>
-                e.source.node === node.id && e.source.port === x.id && loops.backEdges.has(e.id),
+            const loopEdge = doc.workflow.edges.find(
+              (e) => e.source.node === node.id && e.source.port === x.id && loops.inCycle.has(e.id),
             );
+            const others = node.exits.filter((y) => y.id !== x.id);
             return (
-              <div key={x.id} className="grid grid-cols-[1fr_6rem_2rem] items-center gap-2">
+              <div
+                key={x.id}
+                className="grid grid-cols-[1.5rem_1fr_5.5rem_2rem] items-center gap-2"
+                data-exit-row={x.id}
+              >
+                <div className="flex flex-col">
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                    aria-label={`Move exit ${i + 1} up`}
+                    disabled={i === 0}
+                    onClick={() =>
+                      setExits((xs) => {
+                        const next = [...xs];
+                        next.splice(i - 1, 0, ...next.splice(i, 1));
+                        return next;
+                      }, 'order')
+                    }
+                  >
+                    <ArrowUp className="size-3" />
+                  </button>
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                    aria-label={`Move exit ${i + 1} down`}
+                    disabled={i === node.exits.length - 1}
+                    onClick={() =>
+                      setExits((xs) => {
+                        const next = [...xs];
+                        next.splice(i + 1, 0, ...next.splice(i, 1));
+                        return next;
+                      }, 'order')
+                    }
+                  >
+                    <ArrowDown className="size-3" />
+                  </button>
+                </div>
                 <Input
                   value={x.label}
                   aria-label={`Exit ${i + 1} label`}
                   className="h-8 text-sm"
-                  onChange={(e) =>
-                    set(
-                      (n) =>
-                        n.type === 'decision'
-                          ? {
-                              ...n,
-                              exits: n.exits.map((y) =>
-                                y.id === x.id ? { ...y, label: e.target.value } : y,
-                              ),
-                            }
-                          : n,
-                      `exit:${x.id}:label`,
-                    )
-                  }
+                  onChange={(e) => setExit(x.id, { label: e.target.value }, 'label')}
                 />
                 <OptionalNumber
                   value={x.maxIterations}
-                  placeholder={loopsBack ? 'needed' : '—'}
+                  placeholder={loopEdge ? 'needed' : '—'}
+                  aria-label={`Exit ${i + 1} max loops`}
                   className="h-8"
                   onChange={(maxIterations) =>
-                    set(
-                      (n) =>
-                        n.type === 'decision'
-                          ? {
-                              ...n,
-                              exits: n.exits.map((y) =>
-                                y.id === x.id ? { ...y, maxIterations } : y,
-                              ),
-                            }
-                          : n,
-                      `exit:${x.id}:cap`,
+                    setExit(
+                      x.id,
+                      maxIterations === undefined
+                        ? { maxIterations, onExhausted: undefined }
+                        : { maxIterations },
+                      'cap',
                     )
                   }
                 />
@@ -784,10 +890,35 @@ function DecisionFields({
                 >
                   <X />
                 </Button>
-                {loopsBack && (
-                  <span className="col-span-3 -mt-1 inline-flex items-center gap-1 text-[11px] text-amber-700">
-                    <RotateCcw className="size-3" /> loops back
+                {loopEdge && (
+                  <span className="col-span-3 col-start-2 -mt-1 inline-flex items-center gap-1 text-[11px] text-amber-700">
+                    <RotateCcw className="size-3" /> part of a loop
                   </span>
+                )}
+                {x.maxIterations !== undefined && (
+                  <div className="col-span-3 col-start-2 flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className="shrink-0">When the cap is hit</span>
+                    <EnumSelect
+                      id={`exit-${x.id}-exhausted`}
+                      aria-label={`When exit ${i + 1} runs out of loops`}
+                      className="h-7 text-xs"
+                      value={x.onExhausted?.action === 'exit' ? x.onExhausted.exit : 'halt'}
+                      options={[
+                        { value: 'halt', label: 'Stop and ask a human' },
+                        ...others.map((y) => ({ value: y.id, label: `Take “${y.label}”` })),
+                      ]}
+                      onChange={(v) =>
+                        setExit(
+                          x.id,
+                          {
+                            onExhausted:
+                              v === 'halt' ? { action: 'halt' } : { action: 'exit', exit: v },
+                          },
+                          'exhausted',
+                        )
+                      }
+                    />
+                  </div>
                 )}
               </div>
             );
@@ -796,23 +927,17 @@ function DecisionFields({
             variant="outline"
             size="sm"
             onClick={() =>
-              set(
-                (n) =>
-                  n.type === 'decision'
-                    ? {
-                        ...n,
-                        exits: [
-                          ...n.exits,
-                          {
-                            id: newLocalId(
-                              'x',
-                              n.exits.map((y) => y.id),
-                            ),
-                            label: `exit ${n.exits.length + 1}`,
-                          },
-                        ],
-                      }
-                    : n,
+              setExits(
+                (xs) => [
+                  ...xs,
+                  {
+                    id: newLocalId(
+                      'x',
+                      xs.map((y) => y.id),
+                    ),
+                    label: `exit ${xs.length + 1}`,
+                  },
+                ],
                 'exits',
               )
             }
@@ -852,6 +977,10 @@ function EdgePanel(props: InspectorProps & { edge: WorkflowEdge }) {
         onDelete={props.onDeleteSelection}
       />
       <div className="flex-1 space-y-4 overflow-y-auto p-4" key={edge.id}>
+        <ItemProblems
+          problems={props.check.problems.filter((p) => p.edges.includes(edge.id))}
+          onFix={props.onFix}
+        />
         <Field
           label="Payload"
           htmlFor="edge-payload"
@@ -1058,7 +1187,7 @@ function EdgePanel(props: InspectorProps & { edge: WorkflowEdge }) {
           <Field
             label="Max loops"
             htmlFor="edge-cap"
-            hint={`Set on the decision’s “${exit.label}” exit.${loops.backEdges.has(edge.id) ? ' This edge loops back, so it needs a cap.' : ''}`}
+            hint={`Set on the decision’s “${exit.label}” exit.${loops.inCycle.has(edge.id) ? ' This exit is part of a loop: every loop needs a cap on one of its decision exits.' : ''}`}
           >
             <OptionalNumber
               id="edge-cap"

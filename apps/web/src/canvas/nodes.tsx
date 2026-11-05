@@ -1,6 +1,8 @@
 import {
   describeScope,
   isBranchVersion,
+  joinInputs,
+  joinLabel,
   type WorkflowNode,
   type WorkflowNodeType,
 } from '@app/schema';
@@ -12,7 +14,7 @@ import {
   type NodeProps,
   type NodeTypes,
 } from '@xyflow/react';
-import { GitFork as ForkIcon, ShieldAlert } from 'lucide-react';
+import { CircleAlert, GitFork as ForkIcon, Merge, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { modelLabel } from '@/components/agent-defaults';
 import { BuiltinIcon } from '@/components/tools';
 import { cn } from '@/lib/utils';
@@ -31,7 +33,62 @@ function firstLine(text: string | undefined, max = 60): string {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
+/** Problems and join state of a node, for its outline, marker and join chip. */
+function useNodeStatus(id: string) {
+  const { graph, loops, check } = useCanvasContext();
+  const node = graph.nodes.find((n) => n.id === id);
+  const inputs = joinInputs(graph, id, loops).length;
+  const severity = check.nodes.get(id);
+  const messages = check.problems.filter((p) => p.nodes[0] === id).map((p) => p.message);
+  const join = inputs > 1 ? (node?.join ? joinLabel(node.join, inputs) : null) : undefined;
+  return { severity, messages, join, inputs };
+}
+
+/** Red (error) or amber (warning) marker in a node's corner, with the messages as a tooltip. */
+function ProblemMarker({ id }: { id: string }) {
+  const { severity, messages } = useNodeStatus(id);
+  if (!severity) return null;
+  const Icon = severity === 'error' ? CircleAlert : TriangleAlert;
+  return (
+    <span
+      className={cn(
+        'absolute -top-2 -right-2 z-10 flex size-5 items-center justify-center rounded-full border-2 border-background',
+        severity === 'error' ? 'bg-destructive text-white' : 'bg-amber-400 text-amber-950',
+      )}
+      title={messages.join('\n')}
+      data-problem-marker={severity}
+    >
+      <Icon className="size-3" />
+    </span>
+  );
+}
+
+/** How a node with several inputs waits for them; red when not chosen yet. */
+function JoinChip({ id }: { id: string }) {
+  const { join, inputs } = useNodeStatus(id);
+  if (join === undefined) return null;
+  return (
+    <Chip
+      className={cn(join === null && 'bg-destructive/10 text-destructive')}
+      title={
+        join === null
+          ? `${inputs} inputs: choose how this waits for them`
+          : `Waits for ${join} of its ${inputs} inputs`
+      }
+    >
+      <Merge className="size-3 rotate-90" />
+      {join === null ? 'join?' : `join ${join}`}
+    </Chip>
+  );
+}
+
+const problemOutline = {
+  error: 'outline-2 outline-offset-2 outline-destructive/70',
+  warning: 'outline-2 outline-offset-2 outline-amber-400/80',
+} as const;
+
 function Card({
+  id,
   type,
   selected,
   title,
@@ -42,6 +99,7 @@ function Card({
   className,
   children,
 }: {
+  id: string;
   type: WorkflowNodeType;
   selected: boolean;
   title: React.ReactNode;
@@ -54,15 +112,19 @@ function Card({
 }) {
   const meta = NODE_META[type];
   const Icon = meta.icon;
+  const { severity, join } = useNodeStatus(id);
   return (
     <div
       className={cn(
-        'w-56 rounded-lg border bg-card text-card-foreground shadow-sm transition-shadow',
+        'relative w-56 rounded-lg border bg-card text-card-foreground shadow-sm transition-shadow',
         selected && 'ring-2 ring-primary ring-offset-1',
+        severity && problemOutline[severity],
         className,
       )}
       data-node-type={type}
+      data-problem={severity}
     >
+      <ProblemMarker id={id} />
       {inHandle && <Handle type="target" position={Position.Left} className={handleClass} />}
       <div className="flex items-start gap-2 p-2.5">
         <span
@@ -82,16 +144,30 @@ function Card({
           )}
         </div>
       </div>
-      {badges && <div className="flex flex-wrap gap-1 px-2.5 pb-2">{badges}</div>}
+      {(badges || join !== undefined) && (
+        <div className="flex flex-wrap gap-1 px-2.5 pb-2">
+          {badges}
+          <JoinChip id={id} />
+        </div>
+      )}
       {children}
       {outHandle && <Handle type="source" position={Position.Right} className={handleClass} />}
     </div>
   );
 }
 
-function Chip({ children, className }: { children: React.ReactNode; className?: string }) {
+function Chip({
+  children,
+  className,
+  title,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  title?: string;
+}) {
   return (
     <span
+      title={title}
       className={cn(
         'inline-flex items-center gap-1 rounded bg-muted px-1.5 py-px text-[10px] font-medium text-muted-foreground',
         className,
@@ -104,11 +180,12 @@ function Chip({ children, className }: { children: React.ReactNode; className?: 
 
 // ---- Node types ----
 
-function InputNodeView({ data, selected }: NodeProps<FlowNode>) {
+function InputNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
   if (n.type !== 'input') return null;
   return (
     <Card
+      id={id}
       type="input"
       selected={selected}
       inHandle={false}
@@ -119,11 +196,12 @@ function InputNodeView({ data, selected }: NodeProps<FlowNode>) {
   );
 }
 
-function OutputNodeView({ data, selected }: NodeProps<FlowNode>) {
+function OutputNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
   if (n.type !== 'output') return null;
   return (
     <Card
+      id={id}
       type="output"
       selected={selected}
       outHandle={false}
@@ -150,6 +228,7 @@ function AgentNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   });
   return (
     <Card
+      id={id}
       type="agent"
       selected={selected}
       title={n.label || (agent?.name ?? (pinned.state === 'missing' ? 'Missing agent' : ref.id))}
@@ -178,11 +257,12 @@ function AgentNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   );
 }
 
-function ArtifactNodeView({ data, selected }: NodeProps<FlowNode>) {
+function ArtifactNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
   if (n.type !== 'artifact') return null;
   return (
     <Card
+      id={id}
       type="artifact"
       selected={selected}
       className="rounded-tr-2xl border-dashed"
@@ -193,7 +273,7 @@ function ArtifactNodeView({ data, selected }: NodeProps<FlowNode>) {
   );
 }
 
-function ToolStepNodeView({ data, selected }: NodeProps<FlowNode>) {
+function ToolStepNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
   const { tools } = useCanvasContext();
   if (n.type !== 'toolStep') return null;
@@ -201,6 +281,7 @@ function ToolStepNodeView({ data, selected }: NodeProps<FlowNode>) {
   const args = Object.values(n.args).filter(Boolean).join(' ');
   return (
     <Card
+      id={id}
       type="toolStep"
       selected={selected}
       title={n.label || (preset?.name ?? n.tool.id)}
@@ -217,11 +298,12 @@ function ToolStepNodeView({ data, selected }: NodeProps<FlowNode>) {
   );
 }
 
-function HumanInputNodeView({ data, selected }: NodeProps<FlowNode>) {
+function HumanInputNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
   if (n.type !== 'humanInput') return null;
   return (
     <Card
+      id={id}
       type="humanInput"
       selected={selected}
       title={n.label || 'Human input'}
@@ -237,11 +319,12 @@ function HumanInputNodeView({ data, selected }: NodeProps<FlowNode>) {
   );
 }
 
-function SharedStoreNodeView({ data, selected }: NodeProps<FlowNode>) {
+function SharedStoreNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
   if (n.type !== 'sharedStore') return null;
   return (
     <Card
+      id={id}
       type="sharedStore"
       selected={selected}
       className="border-double border-4"
@@ -278,8 +361,9 @@ function NoteNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   );
 }
 
-function DecisionNodeView({ data, selected }: NodeProps<FlowNode>) {
+function DecisionNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
+  const { severity, join } = useNodeStatus(id);
   if (n.type !== 'decision') return null;
   const evaluator =
     n.evaluator.type === 'deterministic'
@@ -288,14 +372,19 @@ function DecisionNodeView({ data, selected }: NodeProps<FlowNode>) {
         ? 'agent'
         : 'human';
   return (
-    <div className="flex items-center" data-node-type="decision">
+    <div className="flex items-center" data-node-type="decision" data-problem={severity}>
       <div className="relative size-28 shrink-0">
+        <span className="absolute top-2 right-2">
+          <ProblemMarker id={id} />
+        </span>
         <Handle type="target" position={Position.Left} className={handleClass} />
         <svg viewBox="0 0 100 100" className="absolute inset-0 size-full overflow-visible">
           <polygon
             points="50,2 98,50 50,98 2,50"
             className={cn(
               'fill-amber-50 stroke-amber-300 transition-all',
+              severity === 'error' && 'stroke-destructive',
+              severity === 'warning' && 'stroke-amber-500',
               selected && 'stroke-primary',
             )}
             strokeWidth={selected ? 3 : 1.5}
@@ -306,6 +395,11 @@ function DecisionNodeView({ data, selected }: NodeProps<FlowNode>) {
             {n.label || 'Decision'}
           </span>
           <span className="mt-0.5 text-[10px] text-amber-800">{evaluator}</span>
+          {join !== undefined && (
+            <span className="mt-0.5">
+              <JoinChip id={id} />
+            </span>
+          )}
         </div>
       </div>
       <div className="-ml-3 flex flex-col gap-1.5">

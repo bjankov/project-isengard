@@ -2,6 +2,7 @@ import type { z } from 'zod';
 import type { ENTITY_SCHEMAS, EntityByKind, EntitySummary, Settings } from './entities.js';
 import type { EntityKind, Ref } from './ids.js';
 import type { EntityVersionSummary, VersionStatus } from './versioning.js';
+import type { WorkflowProblem } from './workflow/validate.js';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -102,11 +103,21 @@ export interface RebuildResponse {
 export interface ApiErrorBody {
   /**
    * `merge_conflict` (409): main changed since the branch started; retry with `force` to
-   * overwrite. `bad_request` (400): e.g. merging a branch with no changes.
+   * overwrite. `bad_request` (400): e.g. merging a branch with no changes. `workflow` (400): the
+   * workflow has problems that block saving (uncapped loops) or merging (any error), in
+   * `problems`.
    */
-  error: 'not_found' | 'validation' | 'bad_request' | 'conflict' | 'merge_conflict' | 'internal';
+  error:
+    | 'not_found'
+    | 'validation'
+    | 'bad_request'
+    | 'conflict'
+    | 'merge_conflict'
+    | 'workflow'
+    | 'internal';
   message: string;
   issues?: { path: (string | number)[]; message: string }[];
+  problems?: WorkflowProblem[];
 }
 
 /**

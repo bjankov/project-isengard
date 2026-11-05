@@ -18,6 +18,7 @@ export function EnumSelect<T extends string>({
   onChange,
   disabled,
   className,
+  'aria-label': ariaLabel,
 }: {
   id?: string;
   value: T;
@@ -25,10 +26,11 @@ export function EnumSelect<T extends string>({
   onChange: (value: T) => void;
   disabled?: boolean;
   className?: string;
+  'aria-label'?: string;
 }) {
   return (
     <Select value={value} onValueChange={(v) => onChange(v as T)} disabled={disabled}>
-      <SelectTrigger id={id} className={cn('w-full', className)}>
+      <SelectTrigger id={id} aria-label={ariaLabel} className={cn('w-full', className)}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -52,16 +54,19 @@ export function OptionalNumber({
   onChange,
   placeholder,
   className,
+  'aria-label': ariaLabel,
 }: {
   id?: string;
   value: number | undefined;
   onChange: (value: number | undefined) => void;
   placeholder?: string;
   className?: string;
+  'aria-label'?: string;
 }) {
   return (
     <Input
       id={id}
+      aria-label={ariaLabel}
       type="number"
       inputMode="numeric"
       min={1}

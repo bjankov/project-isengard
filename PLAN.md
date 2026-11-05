@@ -241,12 +241,12 @@ An **evaluator type dropdown** has three options:
    - Choose whether the reviewer may attach feedback.
 
 **Loops:**
-- Any exit edge that creates a cycle is a back-edge and **must** have `maxIterations`, configured on that decision exit. The UI blocks saving a workflow without it.
+- Every loop **must** pass through a decision exit with `maxIterations`, configured on that exit. Once the capped exits are taken out, nothing may still go round in a circle. A loop without any decision (e.g. agent → agent → back) is therefore not allowed: only decisions branch, so nothing could stop it. The UI and the server block saving (and merging) a workflow with an uncapped loop.
 - An optional `onExhausted` exit (where to go when the cap is hit) **[default: stop and request human attention]**.
 
 ### 7.5 Joins
 
-Any node with more than one incoming edge has a **join mode**:
+Any node with more than one incoming edge has a **join mode**. Edges that come back round a loop and reads from a shared store don't count (a loop-back re-runs its target with the latest of its other inputs; a store read is access, not a trigger), and shared stores never join:
 - `all`: wait for every input (fan-in)
 - `any`: proceed on first input
 - `n-of-m`: proceed when N inputs arrived (quorum, ensemble voting)
@@ -366,7 +366,7 @@ Select an agent node and open **Context preview** to see exactly what that agent
 
 ### 9.5 Live validation
 
-Show warnings and errors on the canvas (node/edge highlight) and in a collapsible problems panel. At minimum:
+Show warnings and errors on the canvas (node/edge highlight) and in a collapsible problems panel. An uncapped loop blocks saving; **any error blocks merging** (a version on main must be complete); warnings block neither. At minimum:
 - A back-edge without `maxIterations` (blocks save).
 - An agent writes an Artifact but has no write tool covering its path.
 - A `reference` context mode where the receiving agent has no read tool covering the path.

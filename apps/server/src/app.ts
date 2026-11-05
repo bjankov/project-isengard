@@ -1,4 +1,5 @@
 import {
+  DRAFT_BRANCH,
   kindFromPlural,
   safeParseEntity,
   type ApiErrorBody,
@@ -20,6 +21,7 @@ import {
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import type { AppConfig } from './config.js';
 import { checkGitInstalled } from './git.js';
+import { WORKFLOW_KINDS, WorkflowError, checkMerge, checkSave } from './workflow-check.js';
 import {
   checkNewWorkspace,
   checkWorkspace,
@@ -83,6 +85,9 @@ export async function buildApp(
     } else if (err instanceof FieldError) {
       status = 400;
       body = { error: 'validation', message: err.message, issues: err.issues };
+    } else if (err instanceof WorkflowError) {
+      status = 400;
+      body = { error: 'workflow', message: err.message, problems: err.problems };
     } else if (err instanceof MergeConflictError) {
       status = 409;
       body = { error: 'merge_conflict', message: err.message };
@@ -212,6 +217,8 @@ export async function buildApp(
     async (req, reply) => {
       const kind = kindParam(req.params.kinds);
       let body = req.body;
+      // Before anything else, so a refused project never leaves a workspace folder behind.
+      if (WORKFLOW_KINDS.has(kind)) checkSave(body);
       if (kind === 'project') {
         body =
           req.query.createWorkspace === '1'
@@ -241,6 +248,7 @@ export async function buildApp(
       const previous = await store.getLatest('project', req.params.id);
       body = await prepareProject(body, previous.workspacePath);
     }
+    if (WORKFLOW_KINDS.has(kind)) checkSave(body);
     return store.update(kind, req.params.id, body, { branch: req.query.branch });
   });
 
@@ -275,8 +283,19 @@ export async function buildApp(
       if (body.note !== undefined && typeof body.note !== 'string') {
         throw new BadRequestError('"note" must be a string');
       }
-      return store.merge(kindParam(req.params.kinds), req.params.id, {
-        branch: typeof body.branch === 'string' ? body.branch : undefined,
+      const kind = kindParam(req.params.kinds);
+      const branch = typeof body.branch === 'string' ? body.branch : undefined;
+      if (kind === 'project' || kind === 'template') {
+        const entity = await store
+          .get(kind, req.params.id, branch ?? DRAFT_BRANCH)
+          .catch((err: unknown) => {
+            if (err instanceof NotFoundError) return undefined; // merge() reports it
+            throw err;
+          });
+        if (entity) await checkMerge(store, entity);
+      }
+      return store.merge(kind, req.params.id, {
+        branch,
         force: body.force === true,
         note: body.note,
       });

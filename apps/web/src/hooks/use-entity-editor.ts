@@ -132,6 +132,8 @@ export interface Versioning {
   merge: (opts?: { force?: boolean; note?: string }) => Promise<MergeOutcome>;
   /** Delete the draft and go back to main. */
   discard: () => Promise<void>;
+  /** Why merging is not possible right now (e.g. the workflow has errors), shown on Merge. */
+  mergeBlocked?: string;
 }
 
 export interface EntityEditor<K extends EntityKind> {
@@ -248,7 +250,9 @@ export function useEntityEditor<K extends EntityKind>(
         });
       }
     } catch (err) {
-      if (err instanceof ApiError && err.status === 400) {
+      if (err instanceof ApiError && err.body?.error === 'workflow') {
+        toast.error('The workflow can’t be saved', { description: err.message });
+      } else if (err instanceof ApiError && err.status === 400) {
         setServerErrors(issuesToErrors(err.issues));
         toast.error('The server rejected some fields', { description: err.issues[0]?.message });
       } else {

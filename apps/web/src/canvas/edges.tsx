@@ -12,10 +12,13 @@ import { cn } from '@/lib/utils';
 
 export type FlowEdgeData = {
   edge: WorkflowEdge;
-  /** Closes a loop: drawn as a curve under the nodes, with the iteration cap. */
+  /** Closes a loop: drawn as a curve under the nodes. */
   back: boolean;
-  /** `maxIterations` of the decision exit this edge leaves from, if any. */
+  /** The loop cap this edge carries (a capped decision exit in a loop). */
   cap: number | undefined;
+  /** Where an uncapped loop is reported: shows a `no cap` badge. */
+  uncapped: boolean;
+  problem: 'error' | 'warning' | undefined;
 };
 export type FlowEdge = Edge<FlowEdgeData>;
 
@@ -53,7 +56,7 @@ function WorkflowEdgeView({
   markerEnd,
 }: EdgeProps<FlowEdge>) {
   if (!data) return null;
-  const { edge, back, cap } = data;
+  const { edge, back, cap, uncapped, problem } = data;
   const [path, labelX, labelY] = back
     ? loopPath(sourceX, sourceY, targetX, targetY)
     : getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
@@ -68,6 +71,7 @@ function WorkflowEdgeView({
         className={cn(
           '!stroke-[1.5] !stroke-muted-foreground/70',
           back && '!stroke-amber-500',
+          problem === 'error' && '!stroke-destructive',
           selected && '!stroke-primary !stroke-2',
         )}
         style={sequencing ? { strokeDasharray: '5 4' } : undefined}
@@ -78,10 +82,13 @@ function WorkflowEdgeView({
           className="nodrag nopan pointer-events-auto absolute flex items-center gap-1"
           style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
           data-edge-label={id}
+          data-problem={problem}
         >
           <span
             className={cn(
               'rounded border bg-background px-1.5 py-px text-[10px] font-medium text-muted-foreground shadow-xs',
+              problem === 'error' && 'border-destructive/60 text-destructive',
+              problem === 'warning' && 'border-amber-400',
               selected && 'border-primary text-foreground',
             )}
             title={`Context: ${edge.context.mode}${sequencing ? ' (sequencing only)' : ''}`}
@@ -89,7 +96,7 @@ function WorkflowEdgeView({
             {sequencing ? 'after' : CONTEXT_LABELS[edge.context.mode]}
             {edge.history === 'all' && ' · all'}
           </span>
-          {back && (
+          {(cap !== undefined || uncapped) && (
             <span
               className={cn(
                 'inline-flex items-center gap-0.5 rounded border px-1.5 py-px text-[10px] font-medium shadow-xs',
@@ -97,7 +104,12 @@ function WorkflowEdgeView({
                   ? 'border-amber-300 bg-amber-50 text-amber-800'
                   : 'border-destructive/40 bg-destructive/5 text-destructive',
               )}
-              title={cap ? `Loops at most ${cap} times` : 'No iteration cap set'}
+              title={
+                cap
+                  ? `Loops at most ${cap} times`
+                  : 'This loop has no cap, so the workflow can’t be saved'
+              }
+              data-loop-badge
             >
               <RotateCcw className="size-2.5" />
               {cap ? `max ${cap}` : 'no cap'}

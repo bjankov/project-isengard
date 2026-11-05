@@ -60,20 +60,60 @@ async function connect(page: Page, from: Locator, to: Locator) {
   await page.mouse.up();
 }
 
+/**
+ * Compare two PNG screenshots in the browser: how many pixels differ, and by how much at most
+ * (0–255 per channel).
+ */
+async function pixelDiff(page: Page, a: Buffer, b: Buffer) {
+  return page.evaluate(
+    async ([a64, b64]) => {
+      const load = async (src: string) => {
+        const img = new Image();
+        img.src = `data:image/png;base64,${src}`;
+        await img.decode();
+        const c = document.createElement('canvas');
+        c.width = img.width;
+        c.height = img.height;
+        const ctx = c.getContext('2d')!;
+        ctx.drawImage(img, 0, 0);
+        return ctx.getImageData(0, 0, c.width, c.height);
+      };
+      const [x, y] = await Promise.all([load(a64), load(b64)]);
+      if (x.width !== y.width || x.height !== y.height)
+        return { size: false, changed: -1, max: 255 };
+      let changed = 0;
+      let max = 0;
+      for (let i = 0; i < x.data.length; i += 4) {
+        const d = Math.max(
+          Math.abs(x.data[i]! - y.data[i]!),
+          Math.abs(x.data[i + 1]! - y.data[i + 1]!),
+          Math.abs(x.data[i + 2]! - y.data[i + 2]!),
+        );
+        if (d > 0) changed++;
+        max = Math.max(max, d);
+      }
+      return { size: true, changed, max };
+    },
+    [a.toString('base64'), b.toString('base64')] as const,
+  );
+}
+
 const inspector = (page: Page) => page.getByRole('complementary', { name: 'Inspector' });
 
 /** Positions of every node as rendered, by node id. */
 async function renderedLayout(page: Page) {
-  return page
-    .locator('.react-flow__node')
-    .evaluateAll((els) =>
-      Object.fromEntries(
-        els.map((el) => [
-          (el as HTMLElement).dataset.id,
-          { transform: (el as HTMLElement).style.transform, text: el.textContent },
-        ]),
-      ),
-    );
+  return page.locator('.react-flow__node').evaluateAll((els) =>
+    Object.fromEntries(
+      els.map((el) => [
+        (el as HTMLElement).dataset.id,
+        {
+          transform: (el as HTMLElement).style.transform,
+          text: el.textContent,
+          problem: el.querySelector('[data-problem-marker]')?.getAttribute('data-problem-marker'),
+        },
+      ]),
+    ),
+  );
 }
 
 test('build demo workflow 1 by hand, save, reload: it looks identical', async ({ page }) => {
@@ -210,8 +250,18 @@ test('build demo workflow 1 by hand, save, reload: it looks identical', async ({
   await page.addStyleTag({ content: hideToasts });
   await page.mouse.move(0, 0);
   await expect.poll(() => renderedLayout(page)).toEqual(before);
-  const afterShot = await page.getByTestId('canvas').screenshot();
-  expect(afterShot.equals(beforeShot)).toBe(true);
+  // Identical up to antialiasing: thin lines and outlines may shift by a subpixel.
+  const close = (d: { size: boolean; changed: number; max: number }) =>
+    d.size && d.changed <= 200 && d.max <= 64;
+  // Problem markers appear once the pinned agents have loaded: wait for the canvas to settle.
+  await expect
+    .poll(async () =>
+      close(await pixelDiff(page, beforeShot, await page.getByTestId('canvas').screenshot())),
+    )
+    .toBe(true);
+  const diff = await pixelDiff(page, beforeShot, await page.getByTestId('canvas').screenshot());
+  expect(diff.changed, JSON.stringify(diff)).toBeLessThanOrEqual(200);
+  expect(diff.max, JSON.stringify(diff)).toBeLessThanOrEqual(64);
   const reloaded = await (await page.request.get(`/api/projects/${projectId}?ref=draft`)).json();
   expect(reloaded).toEqual(saved);
   await shot(page, '22-demo-reloaded');

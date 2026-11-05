@@ -77,6 +77,23 @@ function sampleInput(kind: EntityKind): Record<string, unknown> {
   return kind === 'project' ? { ...input, workspacePath: workspace } : input;
 }
 
+/** Input → Output: a workflow without problems. */
+const MINIMAL_WORKFLOW = {
+  nodes: [
+    { id: 'in', type: 'input', name: 'Task', payloadType: 'text' },
+    { id: 'out', type: 'output', name: 'Result', payloadType: 'text' },
+  ],
+  edges: [
+    {
+      id: 'e1',
+      source: { node: 'in' },
+      target: { node: 'out' },
+      payload: 'text',
+      context: { mode: 'full' },
+    },
+  ],
+};
+
 afterEach(async () => {
   await stop();
   rmSync(home, { recursive: true, force: true });
@@ -132,7 +149,11 @@ describe.each(ENTITY_KINDS)('CRUD for %s', (kind) => {
 
   it('creates, reads, updates and deletes, committing each change as files', async () => {
     await start();
-    const input = sampleInput(kind);
+    // The sample workflows pin agents this library doesn't have, which would block merging.
+    const input =
+      kind === 'project' || kind === 'template'
+        ? { ...sampleInput(kind), workflow: MINIMAL_WORKFLOW, layout: { nodes: {} } }
+        : sampleInput(kind);
 
     // create
     const created = await api<{ entity: { id: string; name: string }; commit: { hash: string } }>(
@@ -969,5 +990,167 @@ describe('workspace', () => {
     rmSync(workspace, { recursive: true, force: true });
     const renamed = await api('PUT', `/api/projects/${id}`, { ...project, name: 'Renamed' });
     expect(renamed.status).toBe(200);
+  });
+});
+
+describe('workflow checks', () => {
+  /** Demo workflow 1 with the loop's cap removed. */
+  const uncapped = () => {
+    const project = structuredClone(sampleInput('project')) as {
+      workflow: { nodes: { id: string; exits?: { maxIterations?: number }[] }[] };
+    };
+    for (const n of project.workflow.nodes) for (const x of n.exits ?? []) delete x.maxIterations;
+    return project;
+  };
+
+  it('refuses to save a workflow with an uncapped loop, before creating anything', async () => {
+    await start();
+    const before = git('rev-parse', 'main').trim();
+    const res = await api<{ error: string; problems: { rule: string; edges: string[] }[] }>(
+      'POST',
+      '/api/projects',
+      uncapped(),
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('workflow');
+    expect(res.body.problems).toMatchObject([{ rule: 'uncapped-loop', edges: ['e7', 'e4', 'e5'] }]);
+    expect(git('rev-parse', 'main').trim()).toBe(before);
+
+    // Nor with ?createWorkspace=1: no folder is made.
+    const folder = join(home, 'new-ws');
+    const created = await api('POST', '/api/projects?createWorkspace=1', {
+      ...uncapped(),
+      workspacePath: folder,
+    });
+    expect(created.status).toBe(400);
+    expect(existsSync(folder)).toBe(false);
+
+    // Saving an existing project is refused the same way.
+    const ok = await api<{ entity: { id: string } }>(
+      'POST',
+      '/api/projects',
+      sampleInput('project'),
+    );
+    expect(ok.status).toBe(201);
+    const put = await api<{ error: string }>(
+      'PUT',
+      `/api/projects/${ok.body.entity.id}`,
+      uncapped(),
+    );
+    expect(put.status).toBe(400);
+    expect(put.body.error).toBe('workflow');
+  });
+
+  it('refuses to merge a workflow with errors, and merges once they are fixed', async () => {
+    await start();
+    const created = await api<{ entity: { id: string } }>('POST', '/api/projects', {
+      ...sampleInput('project'),
+      workflow: MINIMAL_WORKFLOW,
+    });
+    const id = created.body.entity.id;
+    // A dangling decision exit is an error (it doesn't block saving).
+    const withDecision = {
+      ...sampleInput('project'),
+      workflow: {
+        nodes: [
+          ...MINIMAL_WORKFLOW.nodes,
+          {
+            id: 'd',
+            type: 'decision',
+            evaluator: { type: 'human', instructions: 'Ok?', allowFeedback: true },
+            exits: [
+              { id: 'yes', label: 'approve' },
+              { id: 'no', label: 'reject' },
+            ],
+          },
+        ],
+        edges: [
+          {
+            id: 'e1',
+            source: { node: 'in' },
+            target: { node: 'd' },
+            payload: 'text',
+            context: { mode: 'full' },
+          },
+          {
+            id: 'e2',
+            source: { node: 'd', port: 'yes' },
+            target: { node: 'out' },
+            payload: 'text',
+            context: { mode: 'full' },
+          },
+        ],
+      },
+    };
+    expect((await api('PUT', `/api/projects/${id}`, withDecision)).status).toBe(200);
+    const refused = await api<{ error: string; message: string; problems: { rule: string }[] }>(
+      'POST',
+      `/api/projects/${id}/merge`,
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toBe('workflow');
+    expect(refused.body.message).toMatch(/Can’t merge/);
+    expect(refused.body.problems.map((p) => p.rule)).toEqual(['exit-unconnected']);
+
+    // Library rules run on merge too: an agent that doesn't exist is an error.
+    const missingAgent = structuredClone(withDecision);
+    missingAgent.workflow.edges.push({
+      id: 'e3',
+      source: { node: 'd', port: 'no' },
+      target: { node: 'out' },
+      payload: 'text',
+      context: { mode: 'full' },
+    });
+    missingAgent.workflow.nodes.push({
+      id: 'a',
+      type: 'agent',
+      binding: { kind: 'agent', agent: { kind: 'agent', id: 'ghost-zzzzzz', version: 'v1' } },
+    } as never);
+    missingAgent.workflow.edges.push({
+      id: 'e4',
+      source: { node: 'in' },
+      target: { node: 'a' },
+      payload: 'text',
+      context: { mode: 'full' },
+    });
+    await api('PUT', `/api/projects/${id}`, missingAgent);
+    const missing = await api<{ problems: { rule: string }[] }>(
+      'POST',
+      `/api/projects/${id}/merge`,
+    );
+    expect(missing.status).toBe(400);
+    // Both exits now lead to the output, which has two inputs and no join yet.
+    expect(missing.body.problems.map((p) => p.rule)).toEqual(['missing-join', 'missing-ref']);
+
+    // An existing agent with no tools needed fixes it.
+    const agent = await api<{ entity: { id: string } }>('POST', '/api/agents', {
+      ...sampleAgent,
+      skills: [],
+      tools: [],
+    });
+    const fixed = structuredClone(missingAgent);
+    for (const n of fixed.workflow.nodes as { id: string; binding?: unknown }[]) {
+      if (n.id === 'a') {
+        n.binding = {
+          kind: 'agent',
+          agent: { kind: 'agent', id: agent.body.entity.id, version: 'v1' },
+        };
+      }
+    }
+    // The output waits for any of its inputs.
+    for (const n of fixed.workflow.nodes as { id: string; join?: unknown }[]) {
+      if (n.id === 'out') n.join = { mode: 'any' };
+    }
+    fixed.workflow.edges.push({
+      id: 'e5',
+      source: { node: 'a' },
+      target: { node: 'out' },
+      payload: 'text',
+      context: { mode: 'full' },
+    });
+    await api('PUT', `/api/projects/${id}`, fixed);
+    const merged = await api<{ version: string }>('POST', `/api/projects/${id}/merge`);
+    expect(merged.status).toBe(200);
+    expect(merged.body.version).toBe('v2');
   });
 });

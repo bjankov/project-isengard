@@ -5,7 +5,14 @@
 import type { AgentRef, ToolRef } from '../ids.js';
 import type { WorkflowEdge, EdgeEndpoint } from './edges.js';
 import type { WorkflowGraph } from './graph.js';
-import type { PayloadType, WorkflowNode, WorkflowNodeType } from './nodes.js';
+import type {
+  DecisionExit,
+  Evaluator,
+  JoinMode,
+  PayloadType,
+  WorkflowNode,
+  WorkflowNodeType,
+} from './nodes.js';
 
 const ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
@@ -191,18 +198,27 @@ export interface LoopAnalysis {
   /** Edges that are part of a cycle (where the history toggle applies). */
   inCycle: Set<string>;
   /**
-   * Edges that close a cycle when walking forward from the inputs (drawn curved with an
-   * iteration-cap badge; on decision exits they need `maxIterations`).
+   * Edges that close a cycle when walking forward from the inputs. They are drawn curved, and
+   * don't count as inputs for joins: a loop re-runs its target.
    */
   backEdges: Set<string>;
+  /** Decision-exit edges in a cycle whose exit sets `maxIterations`: the caps of their loops. */
+  capEdges: Set<string>;
+  /**
+   * Loops with no capped decision exit (what is left going round once every cap edge is
+   * removed). Each one blocks saving.
+   */
+  uncapped: { nodes: string[]; edges: string[] }[];
 }
 
-export function analyzeLoops(graph: WorkflowGraph): LoopAnalysis {
-  const out = new Map<string, WorkflowEdge[]>();
-  for (const n of graph.nodes) out.set(n.id, []);
-  for (const e of graph.edges) out.get(e.source.node)?.push(e);
-
-  // Strongly connected components (Tarjan): an edge is in a cycle iff both ends share one.
+/** Strongly connected components (Tarjan): node id -> component number. */
+function components(
+  nodeIds: readonly string[],
+  edges: readonly WorkflowEdge[],
+): Map<string, number> {
+  const out = new Map<string, string[]>();
+  for (const id of nodeIds) out.set(id, []);
+  for (const e of edges) out.get(e.source.node)?.push(e.target.node);
   let index = 0;
   const idx = new Map<string, number>();
   const low = new Map<string, number>();
@@ -216,8 +232,7 @@ export function analyzeLoops(graph: WorkflowGraph): LoopAnalysis {
     index++;
     stack.push(v);
     onStack.add(v);
-    for (const e of out.get(v) ?? []) {
-      const w = e.target.node;
+    for (const w of out.get(v) ?? []) {
       if (!idx.has(w)) {
         strong(w);
         low.set(v, Math.min(low.get(v) ?? 0, low.get(w) ?? 0));
@@ -234,15 +249,55 @@ export function analyzeLoops(graph: WorkflowGraph): LoopAnalysis {
       compCount++;
     }
   };
-  for (const n of graph.nodes) if (!idx.has(n.id)) strong(n.id);
+  for (const id of nodeIds) if (!idx.has(id)) strong(id);
+  return comp;
+}
 
-  const inCycle = new Set<string>();
-  for (const e of graph.edges) {
+/** Edges whose two ends are in the same strongly connected component. */
+function cycleEdges(nodeIds: readonly string[], edges: readonly WorkflowEdge[]): WorkflowEdge[] {
+  const comp = components(nodeIds, edges);
+  return edges.filter((e) => {
     const a = comp.get(e.source.node);
-    if (a !== undefined && a === comp.get(e.target.node)) inCycle.add(e.id);
+    return a !== undefined && a === comp.get(e.target.node);
+  });
+}
+
+/** The decision exit an edge leaves from, if its source is a decision. */
+export function exitOf(graph: WorkflowGraph, edge: WorkflowEdge): DecisionExit | undefined {
+  const from = graph.nodes.find((n) => n.id === edge.source.node);
+  return from?.type === 'decision' ? from.exits.find((x) => x.id === edge.source.port) : undefined;
+}
+
+export function analyzeLoops(graph: WorkflowGraph): LoopAnalysis {
+  const nodeIds = graph.nodes.map((n) => n.id);
+  const inCycle = new Set(cycleEdges(nodeIds, graph.edges).map((e) => e.id));
+
+  const capEdges = new Set(
+    graph.edges
+      .filter((e) => inCycle.has(e.id) && exitOf(graph, e)?.maxIterations !== undefined)
+      .map((e) => e.id),
+  );
+
+  // What still goes round once the caps are removed is an uncapped loop.
+  const rest = cycleEdges(
+    nodeIds,
+    graph.edges.filter((e) => !capEdges.has(e.id)),
+  );
+  const restComp = components(nodeIds, rest);
+  const groups = new Map<number, { nodes: Set<string>; edges: string[] }>();
+  for (const e of rest) {
+    const c = restComp.get(e.source.node) ?? -1;
+    let g = groups.get(c);
+    if (!g) groups.set(c, (g = { nodes: new Set(), edges: [] }));
+    g.nodes.add(e.source.node).add(e.target.node);
+    g.edges.push(e.id);
   }
+  const uncapped = [...groups.values()].map((g) => ({ nodes: [...g.nodes], edges: g.edges }));
 
   // Back edges: DFS from the inputs first (then any unvisited node), in node order.
+  const out = new Map<string, WorkflowEdge[]>();
+  for (const id of nodeIds) out.set(id, []);
+  for (const e of graph.edges) out.get(e.source.node)?.push(e);
   const backEdges = new Set<string>();
   const state = new Map<string, 'active' | 'done'>();
   const visit = (v: string) => {
@@ -260,7 +315,108 @@ export function analyzeLoops(graph: WorkflowGraph): LoopAnalysis {
   ];
   for (const n of order) if (!state.has(n.id)) visit(n.id);
 
-  return { inCycle, backEdges };
+  return { inCycle, backEdges, capEdges, uncapped };
+}
+
+// ---- Joins ----
+
+/**
+ * The incoming edges that count for a node's join (PLAN.md 7.5): every incoming edge except
+ * loop back-edges (a loop re-runs its target with the latest of its other inputs) and reads
+ * from a shared store (access to state, not a trigger). Shared stores never join.
+ */
+export function joinInputs(
+  graph: WorkflowGraph,
+  nodeId: string,
+  loops: LoopAnalysis = analyzeLoops(graph),
+): WorkflowEdge[] {
+  const node = graph.nodes.find((n) => n.id === nodeId);
+  if (!node || node.type === 'sharedStore' || node.type === 'note') return [];
+  const stores = new Set(graph.nodes.filter((n) => n.type === 'sharedStore').map((n) => n.id));
+  return graph.edges.filter(
+    (e) => e.target.node === nodeId && !loops.backEdges.has(e.id) && !stores.has(e.source.node),
+  );
+}
+
+/** Whether a node needs a join mode: more than one incoming edge counts for it. */
+export function needsJoin(graph: WorkflowGraph, nodeId: string, loops?: LoopAnalysis): boolean {
+  return joinInputs(graph, nodeId, loops).length > 1;
+}
+
+/** Short label of a join mode, e.g. `all`, `any`, `2 of 3`. */
+export function joinLabel(join: JoinMode, inputs: number): string {
+  return join.mode === 'n-of-m' ? `${join.n} of ${inputs}` : join.mode;
+}
+
+// ---- Origins ----
+
+/**
+ * The node whose content an edge really carries: decisions pass their input through, so an
+ * edge leaving a decision carries what came into it. Follows the first incoming edge with a
+ * payload (the same rule as payload inference); returns the decision itself if it has none.
+ */
+export function traceOrigin(graph: WorkflowGraph, edge: WorkflowEdge): WorkflowNode | undefined {
+  const seen = new Set<string>();
+  let node = graph.nodes.find((n) => n.id === edge.source.node);
+  while (node?.type === 'decision' && !seen.has(node.id)) {
+    seen.add(node.id);
+    const id = node.id;
+    const incoming =
+      graph.edges.find((e) => e.target.node === id && e.payload !== 'none') ??
+      graph.edges.find((e) => e.target.node === id);
+    if (!incoming) break;
+    node = graph.nodes.find((n) => n.id === incoming.source.node);
+  }
+  return node;
+}
+
+// ---- Decision exits ----
+
+/** The exits a new evaluator of this type starts with (PLAN.md 7.4). */
+export function defaultExits(type: Evaluator['type']): DecisionExit[] {
+  switch (type) {
+    case 'deterministic':
+      return [
+        { id: 'pass', label: 'pass' },
+        { id: 'fail', label: 'fail' },
+      ];
+    case 'human':
+      return [
+        { id: 'approve', label: 'approve' },
+        { id: 'reject', label: 'reject' },
+      ];
+    case 'agent':
+      return [];
+  }
+}
+
+function sameExits(a: readonly DecisionExit[], b: readonly DecisionExit[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every(
+      (x, i) =>
+        x.id === b[i]?.id &&
+        x.label === b[i]?.label &&
+        x.maxIterations === undefined &&
+        x.onExhausted === undefined,
+    )
+  );
+}
+
+/**
+ * Switch a decision's evaluator. Exits that are still the untouched defaults of the old type
+ * (and not connected) become the new type's defaults; anything the user changed is kept.
+ */
+export function withEvaluator(
+  graph: WorkflowGraph,
+  node: Extract<WorkflowNode, { type: 'decision' }>,
+  evaluator: Evaluator,
+): Extract<WorkflowNode, { type: 'decision' }> {
+  const untouched =
+    sameExits(node.exits, defaultExits(node.evaluator.type)) &&
+    !graph.edges.some((e) => e.source.node === node.id);
+  const next = defaultExits(evaluator.type);
+  return { ...node, evaluator, exits: untouched && next.length ? next : node.exits };
 }
 
 // ---- Copy / paste ----
