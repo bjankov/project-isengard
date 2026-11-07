@@ -13,7 +13,7 @@ createRoot(rootElement).render(
   <StrictMode>
     <TooltipProvider delayDuration={300}>
       <RouterProvider router={router} />
-      <Toaster position="top-center" offset={56} />
+      <Toaster position="bottom-center" offset={56} />
     </TooltipProvider>
   </StrictMode>,
 );

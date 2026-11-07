@@ -2,19 +2,19 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { defineConfig } from '@playwright/test';
+import { API_PORT, DEMO_API_PORT, DEMO_BASE_URL, DEMO_WEB_PORT, WEB_PORT } from './e2e/env';
 
 /**
  * Fresh, isolated app data folders for every e2e run. Most tests start from an empty library
- * (`APP_DEMO=0`); the first-launch tests (`*.demo.spec.ts`) get their own server pair with
- * the demo content, at `DEMO_BASE_URL`.
+ * (`APP_DEMO=0`); the first-launch tests (`first-launch.spec.ts`) get their own server pair
+ * with the demo content, at `DEMO_BASE_URL`.
  */
 const appHome = mkdtempSync(join(tmpdir(), 'app-e2e-'));
 const demoHome = mkdtempSync(join(tmpdir(), 'app-e2e-demo-'));
-const apiPort = 4417;
-const webPort = 5299;
-const demoApiPort = 4418;
-const demoWebPort = 5300;
-export const DEMO_BASE_URL = `http://127.0.0.1:${demoWebPort}`;
+const apiPort = API_PORT;
+const webPort = WEB_PORT;
+const demoApiPort = DEMO_API_PORT;
+const demoWebPort = DEMO_WEB_PORT;
 
 export default defineConfig({
   testDir: 'e2e',
