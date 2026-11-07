@@ -392,13 +392,17 @@ Built:
   - dragging went from about 20 to 60 fps, and a keystroke in the inspector from about 45 to 19 ms
   - opening takes about 0.5 s
   - the server starts in 0.6 s instead of 3.6 s (git is spawned directly instead of through `simple-git`), and every save is faster
-- **The PLAN.md 12 design-for-v2 checklist was gone through.** No schema change is needed; there are two validation gaps (see the questions below). Details are in DECISIONS.md.
+- **The PLAN.md 12 design-for-v2 checklist was gone through.** No schema change is needed. Its two validation gaps are closed (agreed after review): merging now needs a version v2 can run.
+  - a decision without evaluator code, criteria or reviewer instructions is an error
+  - tool step arguments are checked: required ones filled in, and inside what the preset allows (shell commands match its rules, with no chaining; paths covered; URLs on allowed domains)
+  - saving still works with either; only merging is blocked
+- **Collapsing a pattern no longer logs React Flow edge warnings** (M5 open issue).
 - **Tests:**
-  - 198 unit and API tests, 14 of them new (demo data, first launch, Restore defaults, `~` paths)
-  - 29 browser tests, 5 of them new in `e2e/first-launch.spec.ts`, run against a second server that starts like a first launch: populated landing, open and change both examples, `~` paths, dark mode, shortcuts, and the 100-node workflow with time budgets
+  - 206 unit and API tests, 22 of them new (demo data, first launch, Restore defaults, `~` paths, merge rules for evaluators and tool steps)
+  - 29 browser tests, 5 of them new in `e2e/first-launch.spec.ts`, run against a second server that starts like a first launch: populated landing, open and change both examples (with no edge warnings on collapse), `~` paths, dark mode, shortcuts, and the 100-node workflow with time budgets
 
 How to try it:
-1. `pnpm install`, then `APP_HOME=/tmp/fresh pnpm dev` for a first launch. Your `~/.app` library predates M7: there, **Settings → Restore defaults** adds the demo content.
+1. `pnpm install`, then `APP_HOME=/tmp/fresh pnpm dev` for a first launch. Plain `pnpm dev` opens your `~/.app` library, which already has the demo content (Restore defaults was run on it).
 2. **Projects** shows both examples and a "New here?" hint. Open **Plan, build, test**:
    - read the notes
    - select the Executor and press `P` for the context preview
@@ -408,7 +412,8 @@ How to try it:
 5. Press `?` for the shortcuts. Try `G` then `2`, and `F` on a canvas.
 6. Delete an example project, then use **Settings → Restore defaults** (or, with no projects, **Add the example projects**).
 7. Search a list for something that doesn't exist.
-8. Run the checks: `pnpm check` and `pnpm test:e2e`. The 100-node test prints its timings.
+8. Merge rules: in **Plan, build, test**, press `Ctrl/Cmd+K` and add the **Run tests** tool step. With no command, or with `rm -rf src`, it's an error; `npm test` is fine. A new decision is red until its evaluator code is written. `Ctrl/Cmd+S` saves either way; **Merge** stays disabled while errors remain.
+9. Run the checks: `pnpm check` and `pnpm test:e2e`. The 100-node test prints its timings.
 
 Deviations from PLAN.md:
 - **`simple-git` is gone** (PLAN.md 5.2 names it). The app spawns `git` directly for every command: it already did for plumbing, and `simple-git` added about 50 ms per call. **Proposed PLAN.md change:** "Git: the real `git` binary, spawned directly". If you'd rather keep `simple-git`, it can come back, at the cost of the startup and save times.
@@ -417,8 +422,5 @@ Deviations from PLAN.md:
 - **Additions:** a welcome hint, **Add the example projects** on an empty project list, and the `APP_DEMO=0` switch for tests.
 
 Open issues / questions:
-1. **Should incomplete evaluators block merging?** A decision whose evaluator has no code, criteria or reviewer instructions is a warning (M4), so it can be merged to `main` but couldn't run in v2 (PLAN.md 12). Make it an error at merge, which saving still allows?
-2. **Should tool steps need their arguments?** For example, a shell step without a command is not checked at all today. Same choice: an error at merge?
-3. **Existing libraries keep the old layouts of Moderated discussion and Blackboard,** with the crossing edges. Changing a stored built-in would create a version the user didn't ask for. Delete one and Restore defaults to get the new layout. OK?
-4. **Left over from M5:** collapsing an expanded pattern logs one React Flow development warning per port edge ("Couldn't create edge for … handle"), for the one frame before the collapsed node's handles exist. The edges attach on the next frame; nothing visible. Not fixed in M7.
-5. **"Understand without explanation"** is checked as far as a test can: notes on both canvases, a hint on the Projects page, a test that opens and changes both examples. It hasn't been tried by someone new to the app.
+1. **"Understand without explanation"** is checked as far as a test can: notes on both canvases, a hint on the Projects page, a test that opens and changes both examples. It hasn't been tried by someone new to the app.
+2. **Existing libraries keep their stored layouts of Moderated discussion and Blackboard** (agreed): delete them and use Restore defaults for the new ones. Your `~/.app` library had no built-in patterns yet, so it got the new layouts when it was opened; Restore defaults was run on it too, adding the demo content.
