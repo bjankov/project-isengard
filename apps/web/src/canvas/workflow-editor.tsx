@@ -36,7 +36,9 @@ import {
   MiniMap,
   ReactFlow,
   useReactFlow,
+  useStore,
   type Connection,
+  type ReactFlowState,
   type EdgeChange,
   type FinalConnectionState,
   type NodeChange,
@@ -125,6 +127,27 @@ const snap = (v: number) => Math.round(v / GRID) * GRID;
  * are edited on the same canvas). Patterns use slots instead of agents and have repeat groups;
  * projects have overrides, a workspace, templates and the context preview.
  */
+/**
+ * Edges whose source or target node is measured but lacks the edge's handle, newline-separated
+ * (a string, so the store selector only re-renders when the answer changes). Nodes not
+ * measured yet are left out: React Flow waits for those by itself.
+ */
+function edgesWithoutHandles(s: ReactFlowState, edges: readonly FlowEdge[]): string {
+  const has = (node: string, type: 'source' | 'target', handle: string | null | undefined) => {
+    const bounds = s.nodeLookup.get(node)?.internals.handleBounds;
+    if (!bounds) return true;
+    const list = bounds[type] ?? [];
+    return handle ? list.some((h) => h.id === handle) : list.length > 0;
+  };
+  const missing: string[] = [];
+  for (const e of edges) {
+    if (!has(e.source, 'source', e.sourceHandle) || !has(e.target, 'target', e.targetHandle)) {
+      missing.push(e.id);
+    }
+  }
+  return missing.join('\n');
+}
+
 /**
  * Reuse the previous object for an item (node or edge) when nothing about it changed: the
  * same `content` (its workflow node or edge, compared by identity) and the same everything
@@ -528,7 +551,18 @@ export function WorkflowEditor({
   ]);
 
   const nodes = view.nodes;
-  const edges = view.edges;
+  // An edge is drawn once both its handles exist. When a pattern collapses, its node keeps
+  // the expanded frame's measurements (no port handles) for one frame; React Flow can't draw
+  // the edges to its ports then, and warns.
+  const waiting = useStore(
+    useCallback((s: ReactFlowState) => edgesWithoutHandles(s, view.edges), [view.edges]),
+  );
+  const edges = useMemo(() => {
+    if (!waiting) return view.edges;
+    const ids = new Set(waiting.split('\n'));
+    // Left out, not `hidden`: React Flow positions hidden edges too.
+    return view.edges.filter((e) => !ids.has(e.id));
+  }, [view.edges, waiting]);
   const shift = view.shift;
 
   const onNodesChange = useCallback(

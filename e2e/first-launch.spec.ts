@@ -59,6 +59,10 @@ test('a first launch shows the example projects, ready to open and change', asyn
   ).toBeEnabled();
 
   // --- Ticket router: the pattern opens up; change a node
+  const edgeWarnings: string[] = [];
+  page.on('console', (m) => {
+    if (/Couldn't create edge/.test(m.text())) edgeWarnings.push(m.text());
+  });
   await page.goto(`/projects/${DEMO_IDS.projects.ticketRouter}`);
   await expect(node(page, 'Fix and review')).toBeVisible();
   await expect(problems(page)).toContainText('None');
@@ -69,6 +73,10 @@ test('a first launch shows the example projects, ready to open and change', asyn
   await shot(page, '72-ticket-router-expanded');
   await frame.getByRole('button', { name: 'Collapse pattern' }).click();
   await expect(frame).toHaveCount(0);
+  // Every edge finds its handle while the pattern collapses (M5 open issue).
+  await expect(node(page, 'Fix and review').locator('.react-flow__handle')).not.toHaveCount(0);
+  await page.waitForTimeout(300);
+  expect(edgeWarnings).toEqual([]);
 
   await node(page, 'Researcher').click();
   await inspector(page).getByLabel('Label', { exact: true }).fill('Support researcher');

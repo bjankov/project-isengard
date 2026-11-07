@@ -539,3 +539,9 @@ Agreed rule: saving a draft is always possible (except an uncapped loop), mergin
   - unrestricted shell stays a warning: it runs, by choice
 - **Other warnings stay warnings:** a single exit, an unreachable node and an unrestricted shell all run in v2, they are just worth a look.
 - **Changing a tool step's preset keeps the arguments the new built-in also takes** (e.g. the command, between two shell presets). Before, they were cleared, which with the new rule turned every preset switch into an error.
+
+### Collapsing a pattern without warnings (M5 open issue, fixed after the M7 review)
+- When a pattern collapses, its node keeps the expanded frame's measurements, without the port handles, until React Flow measures it again one frame later. Edges to its ports then couldn't be drawn, and React Flow logged "Couldn't create edge for … handle" for each.
+- **Fix:** an edge is left out of what React Flow gets while a node it touches is measured but lacks the edge's handle (`edgesWithoutHandles` in `workflow-editor.tsx`). Left out rather than `hidden`, because React Flow positions hidden edges too, and warns all the same. Nothing changes on screen: those edges couldn't be drawn in that frame anyway.
+- Silencing warning 008 through `onError` was not chosen: it would also hide real broken edges.
+
