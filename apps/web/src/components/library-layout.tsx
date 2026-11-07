@@ -76,8 +76,17 @@ export function LibraryLayout({ title, newHref, newLabel, groups, error }: Libra
                 {group.items.length === 0 && group.empty && !q && (
                   <div className="px-2 py-1 text-sm text-muted-foreground">{group.empty}</div>
                 )}
-                {group.items.length > 0 && items.length === 0 && (
-                  <div className="px-2 py-1 text-sm text-muted-foreground">No matches</div>
+                {q && items.length === 0 && (
+                  <div className="px-2 py-1 text-sm text-muted-foreground">
+                    No matches for “{query.trim()}”.{' '}
+                    <button
+                      type="button"
+                      className="underline underline-offset-2 hover:text-foreground"
+                      onClick={() => setQuery('')}
+                    >
+                      Clear search
+                    </button>
+                  </div>
                 )}
                 <ul className="space-y-0.5">
                   {items.map((item) => (
