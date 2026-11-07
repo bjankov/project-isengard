@@ -19,6 +19,17 @@ binaries. Don't approve its build (that needs `node-gyp`).
 Data lives in `~/.app` (`library/` is a git repo, `index.db` is a rebuildable index).
 Set `APP_HOME=/some/dir` to use another folder, `APP_NO_OPEN=1` to not open the browser.
 
+## First launch
+A new library comes with demo content: two example projects (**Plan, build, test** and
+**Ticket router**) with their agents, skills and tool presets, and the 10 built-in patterns. The
+example projects work on `~/.app/demo-workspace`, an empty git repo the app creates. Everything
+is ordinary and editable; **Settings → Restore defaults** brings back what was deleted (and adds
+the demo content to a library created before it existed). `APP_DEMO=0` starts without demo
+content (the tests use it).
+
+Press `?` anywhere for the keyboard shortcuts. The header switches between light, dark and the
+system theme (remembered per browser).
+
 ## Versions
 Library entities are versioned in the library repo:
 - Creating an entity makes `v1` on `main`.
@@ -37,7 +48,8 @@ offers `git init` if needed). The canvas opens:
   new node is added after it and connected
 - drag between handles to connect; click a node or edge to configure it on the right
 - `Ctrl/Cmd+Z` / `Ctrl/Cmd+Shift+Z` undo and redo, `Ctrl/Cmd+C`/`V` copy and paste, `Delete`
-  removes the selection, `Ctrl/Cmd+S` saves (to the project's draft)
+  removes the selection, `F` zooms to fit, `Esc` clears the selection, `Ctrl/Cmd+S` saves (to
+  the project's draft)
 - **Problems** (the bar under the canvas): the workflow is checked as you edit. Nodes and edges
   with errors are outlined red, warnings amber; click a problem to jump to it, and some have a
   one-click fix. A loop without a cap blocks saving; any error blocks merging.
@@ -66,7 +78,8 @@ Reusable multi-agent structures (maker-checker, fan-out, router…). The library
 ## Check
 ```sh
 pnpm check        # typecheck + lint + unit/API tests
-pnpm test:e2e     # browser tests (Playwright, uses your installed Google Chrome)
+pnpm test:e2e     # browser tests (Playwright, uses your installed Google Chrome); two server
+                  # pairs: an empty library, and a first launch with demo content
 ```
 
 ## Layout

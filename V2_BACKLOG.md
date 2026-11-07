@@ -50,5 +50,6 @@ Add to this file whenever something is deferred. `PLAN.md` stays the source of t
 | 2026-11-07 | M7 | One-command launch (`npx app`, PLAN.md 5.2) | `pnpm dev` (Vite dev server plus the API, two processes) stays the only launcher in v1. Steps: build the web app with `vite build`; have Fastify serve it and the API on one port (e.g. `@fastify/static`); compile the server and `@app/schema` to plain JS (revisits the M0 "no build step" decision); add a `bin` entry; publish to npm. User decision: wait until the engine exists, since packaging may still change. |
 
 ## Open questions for v2
+- **Pins of fork branches:** a node can pin a fork branch (`fork-<container>-<node>`), whose head moves when the fork is edited. A run should resolve each such pin to a commit when it starts and record it, so the run is reproducible (found by the PLAN.md 12 checklist in M7).
 - How should a skill's `allowed-tools` frontmatter interact with the agent's tool presets? Ignore it, warn when they disagree, or intersect the two? In v1, tool access comes only from presets.
 - Order of skills and tools in the agent's input, and keeping it stable for prompt caching.
