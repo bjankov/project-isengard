@@ -40,9 +40,11 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useEditorSource } from '@/hooks/use-entity-editor';
 import { ApiError, api } from '@/lib/api';
+import { tildePath } from '@/lib/paths';
 import { cn } from '@/lib/utils';
 import { issuesToErrors } from '@/lib/validation';
 import { useEntities, useLibrary, useVersions } from '@/stores/library';
+import { useServerStatus } from '@/stores/server-status';
 
 /** The last location a new workspace folder was created in (per browser). */
 const LOCATION_KEY = 'app.newWorkspaceLocation';
@@ -91,6 +93,8 @@ export function ProjectsPage() {
   const projects = useEntities('project');
   const templates = useEntities('template');
   const versions = useVersions('project');
+  const status = useServerStatus((s) => s.status);
+  const homeDir = status.state === 'online' ? status.health.homeDir : undefined;
   const [creating, setCreating] = useState<{ template?: Template } | null>(null);
   const [welcomeDismissed, setWelcomeDismissed] = useBooleanPreference('app.welcomeDismissed');
   const welcome =
@@ -192,7 +196,9 @@ export function ProjectsPage() {
                     <div className="mt-auto pt-4 text-xs text-muted-foreground">
                       <div className="flex items-center gap-1.5 truncate font-mono">
                         <FolderGit2 className="size-3.5 shrink-0" />
-                        <span className="truncate">{p.workspacePath}</span>
+                        <span className="truncate" title={p.workspacePath}>
+                          {tildePath(p.workspacePath, homeDir)}
+                        </span>
                       </div>
                       <div className="mt-1">
                         {p.workflow.nodes.length} nodes · {p.workflow.edges.length} edges

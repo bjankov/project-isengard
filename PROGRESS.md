@@ -387,14 +387,15 @@ Built:
   - right-to-left edges on one row arc over it
   - Moderated discussion and Blackboard no longer have crossing store edges (M5 open issue)
   - toasts sit at the bottom center, clear of the problems bar (M4 open issue) and of header buttons
+  - project cards show the home folder as `~` (`~/.app/demo-workspace`); the full path is in the tooltip
 - **Performance on a 100-node workflow:**
   - dragging went from about 20 to 60 fps, and a keystroke in the inspector from about 45 to 19 ms
   - opening takes about 0.5 s
   - the server starts in 0.6 s instead of 3.6 s (git is spawned directly instead of through `simple-git`), and every save is faster
 - **The PLAN.md 12 design-for-v2 checklist was gone through.** No schema change is needed; there are two validation gaps (see the questions below). Details are in DECISIONS.md.
 - **Tests:**
-  - 196 unit and API tests, 12 of them new (demo data, first launch, Restore defaults)
-  - 28 browser tests, 4 of them new in `e2e/first-launch.spec.ts`, run against a second server that starts like a first launch: populated landing, open and change both examples, dark mode, shortcuts, and the 100-node workflow with time budgets
+  - 198 unit and API tests, 14 of them new (demo data, first launch, Restore defaults, `~` paths)
+  - 29 browser tests, 5 of them new in `e2e/first-launch.spec.ts`, run against a second server that starts like a first launch: populated landing, open and change both examples, `~` paths, dark mode, shortcuts, and the 100-node workflow with time budgets
 
 How to try it:
 1. `pnpm install`, then `APP_HOME=/tmp/fresh pnpm dev` for a first launch. Your `~/.app` library predates M7: there, **Settings → Restore defaults** adds the demo content.
@@ -421,4 +422,3 @@ Open issues / questions:
 3. **Existing libraries keep the old layouts of Moderated discussion and Blackboard,** with the crossing edges. Changing a stored built-in would create a version the user didn't ask for. Delete one and Restore defaults to get the new layout. OK?
 4. **Left over from M5:** collapsing an expanded pattern logs one React Flow development warning per port edge ("Couldn't create edge for … handle"), for the one frame before the collapsed node's handles exist. The edges attach on the next frame; nothing visible. Not fixed in M7.
 5. **"Understand without explanation"** is checked as far as a test can: notes on both canvases, a hint on the Projects page, a test that opens and changes both examples. It hasn't been tried by someone new to the app.
-6. **Project cards show the full workspace path,** which is long for the demo workspace (`/home/…/.app/demo-workspace`). Shorten the home folder to `~`?

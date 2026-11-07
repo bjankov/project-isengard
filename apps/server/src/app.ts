@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import {
   DEMO_WORKSPACE_README,
   DRAFT_BRANCH,
@@ -146,6 +147,7 @@ export async function buildApp(
     libraryDir: config.libraryDir,
     indexPath: store.indexPath,
     libraryHead: (await store.git.head()) ?? '',
+    homeDir: homedir(),
   }));
 
   app.post('/api/index/rebuild', async (): Promise<RebuildResponse> => store.rebuildIndex());

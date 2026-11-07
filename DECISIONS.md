@@ -500,6 +500,7 @@ Format: date, milestone, decision, reason.
 - **No templates yet** explains how to make one.
 - **No projects** offers **Add the example projects** next to **New project** (it runs Restore defaults).
 - **A dismissible hint on the Projects page** points a new user at the first example, the notes on its canvas, and `?` (remembered per browser, `app.welcomeDismissed`).
+- **Project cards show the home folder as `~`** (agreed after M7's review), with the full path in a tooltip. The browser can't know the home folder, so `GET /api/health` now also returns `homeDir`. Only the cards shorten paths: the workspace field shows what is stored, and the stored path stays absolute.
 - The visual consistency pass found the tabs consistent (headers, spacing, badges); no structural changes were needed beyond dark mode.
 
 ### Performance

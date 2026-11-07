@@ -8,7 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   BUILTIN_PATTERNS,
@@ -126,8 +126,12 @@ describe('startup', () => {
     for (const dir of ['skills', 'tools', 'agents', 'patterns', 'templates', 'projects']) {
       expect(existsSync(join(config.libraryDir, dir, '.gitkeep'))).toBe(true);
     }
-    const health = await api<{ ok: boolean; libraryHead: string }>('GET', '/api/health');
+    const health = await api<{ ok: boolean; libraryHead: string; homeDir: string }>(
+      'GET',
+      '/api/health',
+    );
     expect(health.body.ok).toBe(true);
+    expect(health.body.homeDir).toBe(homedir());
     expect(health.body.libraryHead).toBe(git('rev-parse', 'HEAD').trim());
   });
 

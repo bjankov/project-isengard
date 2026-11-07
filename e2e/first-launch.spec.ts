@@ -79,6 +79,23 @@ test('a first launch shows the example projects, ready to open and change', asyn
   await expect(problems(page)).toContainText('None');
 });
 
+test('project cards show the home folder as ~', async ({ page }) => {
+  const demo = await (
+    await page.request.get(`/api/projects/${DEMO_IDS.projects.planBuildTest}`)
+  ).json();
+  const workspace = demo.workspacePath as string;
+  const home = workspace.slice(0, workspace.lastIndexOf('/'));
+  // Pretend the home folder is the one holding the demo workspace.
+  await page.route('**/api/health', async (route) => {
+    const res = await route.fetch();
+    await route.fulfill({ response: res, json: { ...(await res.json()), homeDir: home } });
+  });
+  await page.goto('/projects');
+  // Both demo projects use the demo workspace; the full path stays in the tooltip.
+  const path = page.getByRole('list').locator(`[title="${workspace}"]`).first();
+  await expect(path).toHaveText('~/demo-workspace');
+});
+
 test('dark mode follows the switch and is remembered', async ({ page }) => {
   await page.goto('/projects');
   const html = page.locator('html');

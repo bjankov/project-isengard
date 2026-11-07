@@ -124,6 +124,8 @@ export interface HealthResponse {
   libraryDir: string;
   indexPath: string;
   libraryHead: string;
+  /** The server user's home folder, so paths under it can be shown as `~/…`. */
+  homeDir: string;
 }
 
 export interface RebuildResponse {
