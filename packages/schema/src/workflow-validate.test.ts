@@ -254,13 +254,14 @@ describe('decisions', () => {
     expect(rules(g)).toContain('exhausted-exit');
   });
 
-  it('warns about an evaluator without code', () => {
+  it('an evaluator without code blocks merging, not saving', () => {
     const g = mapNodes(demo, (n) =>
       n.type === 'decision' ? { ...n, evaluator: { ...n.evaluator, code: '' } as never } : n,
     );
-    expect(validateWorkflow(g).find((p) => p.rule === 'evaluator-incomplete')?.severity).toBe(
-      'warning',
-    );
+    expect(validateWorkflow(g).find((p) => p.rule === 'evaluator-incomplete')).toMatchObject({
+      severity: 'error',
+      blocksSave: false,
+    });
   });
 
   it('swaps untouched default exits when the evaluator changes', () => {
@@ -348,6 +349,22 @@ describe('library rules', () => {
       severity: 'warning',
       nodes: ['tests'],
     });
+  });
+
+  it('tool step arguments must be filled in and allowed by the preset', () => {
+    const withArgs = (args: Record<string, string>) =>
+      validateWorkflow(
+        mapNodes(demo, (n) => (n.id === 'tests' && n.type === 'toolStep' ? { ...n, args } : n)),
+        demoResolver,
+      ).filter((p) => p.rule === 'tool-args');
+    expect(withArgs({ command: 'npm test' })).toEqual([]);
+    expect(withArgs({})[0]).toMatchObject({
+      severity: 'error',
+      blocksSave: false,
+      nodes: ['tests'],
+    });
+    expect(withArgs({})[0]?.message).toMatch(/has no command yet/);
+    expect(withArgs({ command: 'rm -rf src' })[0]?.message).toMatch(/“rm -rf src”.*doesn’t allow/);
   });
 });
 

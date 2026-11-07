@@ -2,6 +2,7 @@ export * from './ids.js';
 export * from './skill.js';
 export * from './skill-md.js';
 export * from './tool.js';
+export * from './tool-step.js';
 export * from './agent.js';
 export * from './workflow/nodes.js';
 export * from './workflow/edges.js';

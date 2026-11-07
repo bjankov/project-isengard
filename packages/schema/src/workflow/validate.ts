@@ -6,6 +6,7 @@ import type { Agent } from '../agent.js';
 import { anyGlobCovers } from '../glob.js';
 import type { AgentRef, Ref, ToolRef } from '../ids.js';
 import { isUnrestrictedShell, type ToolPreset } from '../tool.js';
+import { toolStepArgProblems } from '../tool-step.js';
 import { analyzeLoops, exitOf, joinInputs, traceOrigin, type LoopAnalysis } from './editing.js';
 import type { WorkflowGraph } from './graph.js';
 import type { WorkflowNode } from './nodes.js';
@@ -49,6 +50,7 @@ export type ProblemRule =
   | 'exit-unconnected'
   | 'exhausted-exit'
   | 'evaluator-incomplete'
+  | 'tool-args'
   | 'unreachable'
   | 'missing-ref'
   | 'write-not-covered'
@@ -364,7 +366,7 @@ export function validateWorkflow(
     if (incomplete) {
       add({
         rule: 'evaluator-incomplete',
-        severity: 'warning',
+        severity: 'error',
         message: incomplete,
         nodes: [node.id],
         edges: [],
@@ -444,14 +446,20 @@ export function validateWorkflow(
           nodes: [node.id],
           edges: [],
         });
-      } else if (tool && isUnrestrictedShell(tool)) {
-        add({
-          rule: 'unrestricted-shell',
-          severity: 'warning',
-          message: `${name(node.id)} runs ${tool.name}, an unrestricted shell. It can run any command, bypassing every other restriction.`,
-          nodes: [node.id],
-          edges: [],
-        });
+      } else if (tool) {
+        if (isUnrestrictedShell(tool)) {
+          add({
+            rule: 'unrestricted-shell',
+            severity: 'warning',
+            message: `${name(node.id)} runs ${tool.name}, an unrestricted shell. It can run any command, bypassing every other restriction.`,
+            nodes: [node.id],
+            edges: [],
+          });
+        }
+        // A step v2 couldn't run (or that steps outside its preset) can be saved, not merged.
+        for (const message of toolStepArgProblems(tool, node.args, name(node.id))) {
+          add({ rule: 'tool-args', severity: 'error', message, nodes: [node.id], edges: [] });
+        }
       }
     }
   }

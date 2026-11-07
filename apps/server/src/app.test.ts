@@ -1144,6 +1144,22 @@ describe('workflow checks', () => {
     expect(refused.body.message).toMatch(/Can’t merge/);
     expect(refused.body.problems.map((p) => p.rule)).toEqual(['exit-unconnected']);
 
+    // A decision v2 couldn't run (no instructions for the reviewer) saves, but can't merge.
+    const noInstructions = structuredClone(withDecision);
+    (
+      noInstructions.workflow.nodes[2] as { evaluator: { instructions: string } }
+    ).evaluator.instructions = '';
+    expect((await api('PUT', `/api/projects/${id}`, noInstructions)).status).toBe(200);
+    const incomplete = await api<{ problems: { rule: string }[] }>(
+      'POST',
+      `/api/projects/${id}/merge`,
+    );
+    expect(incomplete.status).toBe(400);
+    expect(incomplete.body.problems.map((p) => p.rule).sort()).toEqual([
+      'evaluator-incomplete',
+      'exit-unconnected',
+    ]);
+
     // Library rules run on merge too: an agent that doesn't exist is an error.
     const missingAgent = structuredClone(withDecision);
     missingAgent.workflow.edges.push({

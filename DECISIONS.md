@@ -519,9 +519,23 @@ Format: date, milestone, decision, reason.
 ### Design-for-v2 checklist (PLAN.md 12), checked at the end of the MVP
 - Every agent instance resolves to a pinned prompt, skill set, tool scopes, model, effort and limits: **yes.** Agent nodes, slot bindings and evaluator agents pin `{id, version}`; agents pin their skills and presets; overrides are keyed by node path; deleted entities resolve to local copies. A pin can name a fork branch, whose head moves: v2 should record the commit a run starts from (`V2_BACKLOG.md`).
 - Every edge has a payload type and a fully specified context mode: **yes.** Payload is stored. Each context mode carries its config (`summary` its model). Unset `history` means latest only. Unset `access` follows the direction (into a store writes, out of one reads); the editor always sets it.
-- Every decision has an evaluator, exit labels and caps on every back-edge: **yes, with a gap.** Caps are enforced (an uncapped loop blocks saving). But an evaluator with no code, criteria or reviewer instructions is only a warning, so it can be merged and couldn't run. Raised as a question.
+- Every decision has an evaluator, exit labels and caps on every back-edge: **yes.** Caps are enforced (an uncapped loop blocks saving). An evaluator with no code, criteria or reviewer instructions was only a warning; after the M7 review it is an error, so it blocks merging (see below).
 - Every join has a mode: **yes** (an error that blocks merging).
-- Artifacts have workspace-relative paths, tool steps a preset and arguments: **paths yes. Arguments are not checked**: a shell tool step without a command can be merged. Raised as a question.
+- Artifacts have workspace-relative paths, tool steps a preset and arguments: **yes.** Arguments weren't checked; after the M7 review they are (see below).
 - Deterministic evaluator code is stored with its language: **yes.**
 - The workspace is a git repo: **yes** when a project is created or its path changes; it isn't checked again later (M3 decision).
-- **No schema change is needed** for any of these; the two gaps are validation rules.
+- **No schema change is needed** for any of these; the two gaps were validation rules, now closed.
+
+### Merging needs a version v2 can run (after the M7 review)
+Agreed rule: saving a draft is always possible (except an uncapped loop), merging only when the version is complete. Errors block merging; warnings don't.
+- **An incomplete evaluator is an error** (`evaluator-incomplete`): no evaluator code, no criteria for the evaluating agent, or no instructions for the reviewer. A newly added decision starts with empty code, so it shows red until the code is written.
+- **Tool step arguments are checked** (new rule `tool-args`, an error):
+  - each built-in's arguments are defined once, in `packages/schema` (`TOOL_STEP_ARGS`); the inspector reads them from there instead of its own list
+  - required ones must be filled in (shell: command; file tools: path; search: pattern, the folder is optional; web search: query; web fetch: URL)
+  - **shell:** the command must equal an exact rule, or start with a prefix rule followed by a space. Whitespace is collapsed first. A restricted shell never allows `; & | < > `` ` `` $(` or a newline, so `npm test && rm -rf .` can't pass as "npm test …". This also rejects harmless quoted uses like `--grep "a|b"`; a preset with a prefix rule for the whole command line is the way around it.
+  - **file tools:** the path must be workspace-relative and covered by the preset's globs; for search, the whole folder (`<path>/**`) must be covered
+  - **web fetch:** an http(s) URL whose host isn't denied, and is allowed when an allow list is set. `example.com` matches only that host; `*.example.com` matches its subdomains at any depth, not `example.com` itself.
+  - **web search:** only the query is required; the domain lists limit results, which a query can't break
+  - unrestricted shell stays a warning: it runs, by choice
+- **Other warnings stay warnings:** a single exit, an unreachable node and an unrestricted shell all run in v2, they are just worth a look.
+- **Changing a tool step's preset keeps the arguments the new built-in also takes** (e.g. the command, between two shell presets). Before, they were cleared, which with the new rule turned every preset switch into an error.

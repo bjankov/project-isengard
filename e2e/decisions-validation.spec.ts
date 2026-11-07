@@ -216,6 +216,17 @@ test('validation: every rule can be triggered and resolved; loops block saving, 
   await selectOption(page, 'Tool preset', /^Run tests/);
   await expectRules(page, []);
 
+  // --- A tool step's arguments: required, and inside what the preset allows (errors)
+  const command = inspector(page).getByLabel('Command', { exact: true });
+  await command.fill('');
+  await expectRules(page, ['tool-args']);
+  await expect(page.getByTestId('problems-list')).toContainText('has no command yet');
+  await command.fill('rm -rf src');
+  await expectRules(page, ['tool-args']);
+  await expect(page.getByTestId('problems-list')).toContainText('“rm -rf src”');
+  await command.fill('npm test');
+  await expectRules(page, []);
+
   // --- An agent writes an artifact without a write tool covering it
   await node(page, 'PLAN.md').click();
   await inspector(page).getByLabel('Path', { exact: true }).fill('README.md');
