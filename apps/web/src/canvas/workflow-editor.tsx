@@ -84,6 +84,7 @@ import { ContextPreview } from './context-preview';
 import { ProblemsPanel } from './problems-panel';
 import { SaveAsTemplateDialog } from './save-as-template';
 import { useWorkflowCheck } from './use-workflow-check';
+import { useTheme } from '@/stores/theme';
 
 const GRID = 16;
 const FIT_VIEW = { padding: 0.08, maxZoom: 1 };
@@ -149,6 +150,7 @@ export function WorkflowEditor({
   const settings = useSettings();
   const tools = useEntities('tool');
   const flow = useReactFlow();
+  const colorMode = useTheme((s) => s.resolved);
   const wrapper = useRef<HTMLDivElement>(null);
   const entityId = source.saved?.id ?? '';
   const isPattern = kind === 'pattern';
@@ -1067,6 +1069,7 @@ export function WorkflowEditor({
                 snapGrid={[GRID, GRID]}
                 fitView
                 fitViewOptions={FIT_VIEW}
+                colorMode={colorMode}
                 minZoom={0.2}
                 maxZoom={2}
               >

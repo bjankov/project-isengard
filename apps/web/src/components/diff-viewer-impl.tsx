@@ -2,6 +2,7 @@ import { DiffEditor } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor/editor/editor.api';
 import { useEffect, useRef } from 'react';
 import '@/lib/monaco-setup';
+import { useTheme } from '@/stores/theme';
 import type { DiffViewerProps } from './diff-viewer';
 
 function languageOf(path: string): string {
@@ -15,6 +16,7 @@ export default function DiffViewerImpl({ path, before, after }: DiffViewerProps)
   // @monaco-editor/react disposes the models before the diff widget, which makes Monaco throw
   // on unmount. Keep the models and dispose them after the widget is gone instead.
   const models = useRef<editor.IDiffEditorModel | null>(null);
+  const dark = useTheme((s) => s.resolved === 'dark');
   useEffect(
     () => () => {
       const m = models.current;
@@ -30,6 +32,7 @@ export default function DiffViewerImpl({ path, before, after }: DiffViewerProps)
 
   return (
     <DiffEditor
+      theme={dark ? 'app-dark' : 'app-light'}
       keepCurrentOriginalModel
       keepCurrentModifiedModel
       onMount={(e) => {

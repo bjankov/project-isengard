@@ -10,6 +10,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { CascadeDialog } from '@/components/cascade-dialog';
+import { ThemeSwitch } from '@/components/theme-switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useServerStatus } from '@/stores/server-status';
@@ -105,8 +106,9 @@ export function AppShell() {
             </NavLink>
           ))}
         </nav>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-3">
           <ServerIndicator />
+          <ThemeSwitch />
         </div>
       </header>
       <main className="min-h-0 flex-1 overflow-auto">

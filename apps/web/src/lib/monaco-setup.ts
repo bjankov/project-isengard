@@ -14,3 +14,21 @@ self.MonacoEnvironment = {
 };
 
 loader.config({ monaco });
+
+/** Editor themes that sit on the app's own backgrounds (see `useMonacoTheme`). */
+monaco.editor.defineTheme('app-light', {
+  base: 'vs',
+  inherit: true,
+  rules: [],
+  colors: { 'editor.background': '#ffffff' },
+});
+monaco.editor.defineTheme('app-dark', {
+  base: 'vs-dark',
+  inherit: true,
+  rules: [],
+  colors: {
+    'editor.background': '#111113',
+    'editorGutter.background': '#111113',
+    'diffEditor.unchangedRegionBackground': '#18181b',
+  },
+});
