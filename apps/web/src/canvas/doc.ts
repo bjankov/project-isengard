@@ -20,15 +20,22 @@ export type CanvasKind = 'project' | 'template' | 'pattern';
  */
 export type WorkflowDoc = Omit<Project, 'id'> & { repeat: RepeatGroup[] };
 
+// Shared empty values, so a document's unused parts keep their identity from one change to the
+// next (memoized checks and the canvas context depend on them).
+const NO_REPEAT: RepeatGroup[] = [];
+const NO_OVERRIDES: WorkflowDoc['overrides'] = {};
+
 export function toDoc(kind: CanvasKind, entity: EntityInput<CanvasKind>): WorkflowDoc {
   // Editor drafts start from parsed entities, so every defaulted field is present.
-  if (kind === 'project') return { ...(entity as unknown as Omit<Project, 'id'>), repeat: [] };
+  if (kind === 'project') {
+    return { ...(entity as unknown as Omit<Project, 'id'>), repeat: NO_REPEAT };
+  }
   if (kind === 'template') {
     const t = entity as unknown as Omit<Template, 'id'>;
-    return { ...t, overrides: {}, workspacePath: '', repeat: [] };
+    return { ...t, overrides: NO_OVERRIDES, workspacePath: '', repeat: NO_REPEAT };
   }
   const p = entity as unknown as Omit<Pattern, 'id'>;
-  return { ...p, overrides: {}, workspacePath: '' };
+  return { ...p, overrides: NO_OVERRIDES, workspacePath: '' };
 }
 
 export function fromDoc(kind: CanvasKind, doc: WorkflowDoc): EntityInput<CanvasKind> {

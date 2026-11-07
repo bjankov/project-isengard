@@ -8,6 +8,7 @@ import {
   type EdgeTypes,
 } from '@xyflow/react';
 import { RotateCcw } from 'lucide-react';
+import { memo } from 'react';
 import { cn } from '@/lib/utils';
 
 export type FlowEdgeData = {
@@ -140,4 +141,5 @@ function WorkflowEdgeView({
   );
 }
 
-export const edgeTypes: EdgeTypes = { workflow: WorkflowEdgeView };
+/** Memoized: the editor keeps an edge's props identical while nothing about it changed. */
+export const edgeTypes: EdgeTypes = { workflow: memo(WorkflowEdgeView) };

@@ -205,9 +205,15 @@ test('build demo workflow 1 by hand, save, reload: it looks identical', async ({
   // Move the Output to the end of the chain (layout only).
   const out = await node(page, 'Result').boundingBox();
   const dec = await decision.boundingBox();
+  const canvas = await page.getByTestId('canvas').boundingBox();
   await page.mouse.move(out!.x + 30, out!.y + 20);
   await page.mouse.down();
-  await page.mouse.move(dec!.x + dec!.width + 160, dec!.y - 60, { steps: 10 });
+  // Past the decision, but inside the canvas (zoom to fit leaves little room at the edges).
+  await page.mouse.move(
+    Math.min(dec!.x + dec!.width + 160, canvas!.x + canvas!.width - 80),
+    dec!.y - 60,
+    { steps: 10 },
+  );
   await page.mouse.up();
 
   // Deselect, then save.

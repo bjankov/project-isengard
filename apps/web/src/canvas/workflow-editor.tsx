@@ -43,7 +43,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { BookmarkPlus, Redo2, Undo2 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { toast } from 'sonner';
 import { EditorHeader } from '@/components/editor-header';
@@ -84,6 +84,7 @@ import { ContextPreview } from './context-preview';
 import { ProblemsPanel } from './problems-panel';
 import { SaveAsTemplateDialog } from './save-as-template';
 import { useWorkflowCheck } from './use-workflow-check';
+import { nodeStatuses } from './node-status';
 import { useTheme } from '@/stores/theme';
 
 const GRID = 16;
@@ -136,6 +137,31 @@ const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform
  * are edited on the same canvas). Patterns use slots instead of agents and have repeat groups;
  * projects have overrides, a workspace, templates and the context preview.
  */
+/**
+ * Reuse the previous object for an item (node or edge) when nothing about it changed: the
+ * same `content` (its workflow node or edge, compared by identity) and the same everything
+ * else (compared by value). React Flow and the memoized views then skip unchanged items.
+ */
+function stableItems<T extends { id: string; data?: object }>(
+  cache: Map<string, { sig: string; item: T }>,
+  items: T[],
+  content: (item: T) => unknown,
+): T[] {
+  const seen = new Set<string>();
+  const out = items.map((item) => {
+    seen.add(item.id);
+    const c = content(item);
+    // Everything but the content, by value; the content is compared by identity below.
+    const sig = JSON.stringify(item, (_key, value: unknown) => (value === c ? undefined : value));
+    const prev = cache.get(item.id);
+    if (prev && prev.sig === sig && content(prev.item) === c) return prev.item;
+    cache.set(item.id, { sig, item });
+    return item;
+  });
+  for (const id of [...cache.keys()]) if (!seen.has(id)) cache.delete(id);
+  return out;
+}
+
 export function WorkflowEditor({
   kind,
   source,
@@ -290,6 +316,12 @@ export function WorkflowEditor({
     return new Map(flat.graph.nodes.map((n) => [n.id, n]));
   }, [graph, lookup]);
 
+  const statusOf = useMemo(() => nodeStatuses(graph, loops, check), [graph, loops, check]);
+  // Node and edge objects keep their identity while nothing about them changes (see
+  // `stableItems`), so memoized node views skip re-rendering.
+  const [nodeCache] = useState(() => new Map<string, { sig: string; item: FlowNode }>());
+  const [edgeCache] = useState(() => new Map<string, { sig: string; item: FlowEdge }>());
+
   const view = useMemo(() => {
     const ctx: ExpandContext = { lookup, expanded, bound, progress };
     const flowNodes: FlowNode[] = [];
@@ -366,6 +398,7 @@ export function WorkflowEditor({
             inner: true,
             ...(open !== undefined ? { open } : {}),
             ...(box ? { box } : {}),
+            status: statusOf(inner.id),
           },
           draggable: false,
           // Agents inside take per-project overrides, so they can be selected (in a project).
@@ -447,7 +480,7 @@ export function WorkflowEditor({
           position,
           // The node has its final size from the start (resizing it every animation frame
           // makes the resize observer loop); only the box drawn inside it grows.
-          data: { node: n, open, box: frame.open },
+          data: { node: n, open, box: frame.open, status: statusOf(n.id) },
           selected: selection.nodes.includes(n.id),
           width: frame.full.width,
           height: frame.full.height,
@@ -460,7 +493,7 @@ export function WorkflowEditor({
         id: n.id,
         type: flowNodeType(n.type),
         position,
-        data: { node: n },
+        data: { node: n, status: statusOf(n.id) },
         selected: selection.nodes.includes(n.id),
         measured: measured[n.id],
       };
@@ -484,8 +517,15 @@ export function WorkflowEditor({
       });
     });
 
-    return { nodes: flowNodes, edges: [...edges, ...innerEdges], shift };
+    return {
+      nodes: stableItems(nodeCache, flowNodes, (n) => n.data.node),
+      edges: stableItems(edgeCache, [...edges, ...innerEdges], (e) => e.data?.edge),
+      shift,
+    };
   }, [
+    nodeCache,
+    edgeCache,
+    statusOf,
     kind,
     graph,
     doc.layout.nodes,
@@ -912,34 +952,29 @@ export function WorkflowEditor({
     return () => window.removeEventListener('keydown', onKey);
   }, [history, copy, paste, deleteSelection, graph.nodes, after, kind]);
 
+  // The context must stay stable while editing (every node reads it), so `repin` goes through
+  // a ref to the latest `change`, which changes with every edit.
+  const changeRef = useRef(change);
+  useLayoutEffect(() => {
+    changeRef.current = change;
+  }, [change]);
+  const patternLookup = check.resolver.pattern;
   const context: CanvasContextValue = useMemo(
     () => ({
       kind,
-      graph,
       overrides: doc.overrides,
       repeat: doc.repeat,
-      loops,
-      check,
+      patterns: patternLookup,
       settings,
       tools,
       expanded,
       toggleExpanded,
       repin: (location: string, version: string) =>
-        change((d) => repin('project', d as unknown as Project, location, version) as never),
+        changeRef.current(
+          (d) => repin('project', d as unknown as Project, location, version) as never,
+        ),
     }),
-    [
-      kind,
-      graph,
-      doc.overrides,
-      doc.repeat,
-      loops,
-      check,
-      settings,
-      tools,
-      expanded,
-      toggleExpanded,
-      change,
-    ],
+    [kind, doc.overrides, doc.repeat, patternLookup, settings, tools, expanded, toggleExpanded],
   );
 
   const shortcut = (k: string) => `${isMac ? '⌘' : 'Ctrl+'}${k}`;
