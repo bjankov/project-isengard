@@ -416,7 +416,7 @@ How to try it:
 9. Run the checks: `pnpm check` and `pnpm test:e2e`. The 100-node test prints its timings.
 
 Deviations from PLAN.md:
-- **`simple-git` is gone** (PLAN.md 5.2 names it). The app spawns `git` directly for every command: it already did for plumbing, and `simple-git` added about 50 ms per call. **Proposed PLAN.md change:** "Git: the real `git` binary, spawned directly". If you'd rather keep `simple-git`, it can come back, at the cost of the startup and save times.
+- **`simple-git` is gone.** The app spawns `git` directly for every command: it already did for plumbing, and `simple-git` added about 50 ms per call. **PLAN.md 5.2 was updated by agreement** to "the real `git` binary, spawned directly".
 - **Restore defaults also restores demo content** (PLAN.md 8.4 names only built-in patterns). Agreed at planning.
 - **A sixth demo agent, Researcher,** answers the router's question branch. PLAN.md 9.6 lists five.
 - **Additions:** a welcome hint, **Add the example projects** on an empty project list, and the `APP_DEMO=0` switch for tests.
@@ -424,3 +424,4 @@ Deviations from PLAN.md:
 Open issues / questions:
 1. **"Understand without explanation"** is checked as far as a test can: notes on both canvases, a hint on the Projects page, a test that opens and changes both examples. It hasn't been tried by someone new to the app.
 2. **Existing libraries keep their stored layouts of Moderated discussion and Blackboard** (agreed): delete them and use Restore defaults for the new ones. Your `~/.app` library had no built-in patterns yet, so it got the new layouts when it was opened; Restore defaults was run on it too, adding the demo content.
+3. **Two leftovers moved to `V2_BACKLOG.md`** at the end of the MVP: project cards showing the draft's state (M3) and a template editor (M4).
