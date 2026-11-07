@@ -51,6 +51,7 @@ import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useEntityEditor, type EditorSourceReady } from '@/hooks/use-entity-editor';
+import { dialogOpen, isEditableTarget, isMac } from '@/lib/keys';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useUndoHistory } from '@/hooks/use-undo';
 import { useEntities } from '@/stores/library';
@@ -118,19 +119,6 @@ let clipboard:
   | undefined;
 
 const snap = (v: number) => Math.round(v / GRID) * GRID;
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLElement &&
-    !!target.closest('input, textarea, select, [contenteditable="true"], .monaco-editor')
-  );
-}
-
-function dialogOpen(): boolean {
-  return !!document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"]');
-}
-
-const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
 
 /**
  * The workflow canvas, for a project's workflow or a pattern's graph (PLAN.md 7.7: patterns
@@ -946,11 +934,16 @@ export function WorkflowEditor({
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
         deleteSelection();
+      } else if (!mod && !e.altKey && key === 'f') {
+        e.preventDefault();
+        void flow.fitView({ ...FIT_VIEW, duration: 250 });
+      } else if (e.key === 'Escape') {
+        setSelection({ nodes: [], edges: [] });
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [history, copy, paste, deleteSelection, graph.nodes, after, kind]);
+  }, [history, copy, paste, deleteSelection, graph.nodes, after, kind, flow]);
 
   // The context must stay stable while editing (every node reads it), so `repin` goes through
   // a ref to the latest `change`, which changes with every edit.

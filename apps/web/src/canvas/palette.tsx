@@ -13,6 +13,7 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command';
+import { MOD } from '@/lib/keys';
 import { Kbd } from './kbd';
 import { useEntities, useVersions } from '@/stores/library';
 import { cn } from '@/lib/utils';
@@ -122,7 +123,7 @@ export function Palette({
         </li>
       </ul>
       <p className="border-t p-3 text-xs text-muted-foreground">
-        Drag onto the canvas, or press <Kbd>Ctrl K</Kbd>. With one node selected, new nodes are
+        Drag onto the canvas, or press <Kbd>{MOD} K</Kbd>. With one node selected, new nodes are
         added after it and connected.
       </p>
     </aside>
