@@ -79,7 +79,7 @@ let workspace: string;
 beforeEach(() => {
   // Resolve symlinks (macOS: /var -> /private/var) so paths match what git reports.
   home = realpathSync(mkdtempSync(join(tmpdir(), 'app-test-')));
-  config = loadConfig({ APP_HOME: home });
+  config = loadConfig({ APP_HOME: home, APP_DEMO: '0' });
   workspace = join(home, 'workspace');
   mkdirSync(workspace);
   execFileSync('git', ['init', '-q'], { cwd: workspace });

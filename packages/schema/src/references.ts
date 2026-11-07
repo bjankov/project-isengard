@@ -168,6 +168,23 @@ export function repin<K extends EntityKind>(
   return { ...entity, workflow: { ...graph, nodes } } as EntityByKind[K];
 }
 
+/**
+ * The entity with every reference re-pinned to `version(ref)`, where that returns a version
+ * (e.g. the current version of a built-in pattern). Other references are left as they are.
+ */
+export function repinAll<K extends EntityKind>(
+  kind: K,
+  entity: EntityByKind[K],
+  version: (ref: Ref) => string | undefined,
+): EntityByKind[K] {
+  let out = entity;
+  for (const loc of refLocations(kind, entity)) {
+    const v = version(loc.ref);
+    if (v && v !== loc.ref.version) out = repin(kind, out, loc.key, v);
+  }
+  return out;
+}
+
 // ---- Local copies ----
 
 type LocalCopies = Record<string, LocalCopy | AgentLocalCopy>;

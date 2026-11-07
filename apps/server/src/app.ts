@@ -1,5 +1,7 @@
 import {
+  DEMO_WORKSPACE_README,
   DRAFT_BRANCH,
+  demoContent,
   kindFromPlural,
   safeParseEntity,
   type ApiErrorBody,
@@ -20,6 +22,7 @@ import {
   type EntityKind,
   type HealthResponse,
   type RebuildResponse,
+  type RestoreDefaultsResponse,
   type ReferencedErrorBody,
   type SettingsMutationResponse,
   type SettingsResponse,
@@ -41,6 +44,7 @@ import {
   checkNewWorkspace,
   checkWorkspace,
   createWorkspace,
+  ensureDemoWorkspace,
   expandPath,
   initWorkspace,
   suggestWorkspaces,
@@ -86,7 +90,11 @@ export async function buildApp(
   options: FastifyServerOptions = {},
 ): Promise<BuiltApp> {
   const gitVersion = await checkGitInstalled();
-  const store = await LibraryStore.open(config.libraryDir, config.indexPath);
+  const demo = config.demoWorkspace ? demoContent(config.demoWorkspace) : undefined;
+  const store = await LibraryStore.open(config.libraryDir, config.indexPath, { demo });
+  if (store.firstLaunch && config.demoWorkspace) {
+    await ensureDemoWorkspace(config.demoWorkspace, DEMO_WORKSPACE_README);
+  }
 
   const app = Fastify({ bodyLimit: 10 * 1024 * 1024, ...options });
   app.addHook('onClose', async () => store.close());
@@ -151,7 +159,12 @@ export async function buildApp(
     store.updateSettings(req.body),
   );
 
-  app.post('/api/settings/restore-defaults', async () => store.restoreBuiltinPatterns());
+  app.post('/api/settings/restore-defaults', async (): Promise<RestoreDefaultsResponse> => {
+    if (config.demoWorkspace) {
+      await ensureDemoWorkspace(config.demoWorkspace, DEMO_WORKSPACE_README);
+    }
+    return store.restoreDefaults(demo);
+  });
 
   function parseRoots(body: { roots?: unknown } | undefined): CascadeRoot[] {
     const roots = body?.roots;

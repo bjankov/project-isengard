@@ -3,10 +3,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { defineConfig } from '@playwright/test';
 
-/** Fresh, isolated app data folder for every e2e run. */
+/**
+ * Fresh, isolated app data folders for every e2e run. Most tests start from an empty library
+ * (`APP_DEMO=0`); the first-launch tests (`*.demo.spec.ts`) get their own server pair with
+ * the demo content, at `DEMO_BASE_URL`.
+ */
 const appHome = mkdtempSync(join(tmpdir(), 'app-e2e-'));
+const demoHome = mkdtempSync(join(tmpdir(), 'app-e2e-demo-'));
 const apiPort = 4417;
 const webPort = 5299;
+const demoApiPort = 4418;
+const demoWebPort = 5300;
+export const DEMO_BASE_URL = `http://127.0.0.1:${demoWebPort}`;
 
 export default defineConfig({
   testDir: 'e2e',
@@ -27,13 +35,25 @@ export default defineConfig({
     {
       command: 'pnpm --filter @app/server start',
       url: `http://127.0.0.1:${apiPort}/api/health`,
-      env: { APP_HOME: appHome, PORT: String(apiPort), LOG_LEVEL: 'error' },
+      env: { APP_HOME: appHome, APP_DEMO: '0', PORT: String(apiPort), LOG_LEVEL: 'error' },
       reuseExistingServer: false,
     },
     {
       command: `pnpm --filter @app/web exec vite --port ${webPort} --strictPort --host 127.0.0.1`,
       url: `http://127.0.0.1:${webPort}`,
       env: { PORT: String(apiPort), APP_NO_OPEN: '1' },
+      reuseExistingServer: false,
+    },
+    {
+      command: 'pnpm --filter @app/server start',
+      url: `http://127.0.0.1:${demoApiPort}/api/health`,
+      env: { APP_HOME: demoHome, PORT: String(demoApiPort), LOG_LEVEL: 'error' },
+      reuseExistingServer: false,
+    },
+    {
+      command: `pnpm --filter @app/web exec vite --port ${demoWebPort} --strictPort --host 127.0.0.1`,
+      url: DEMO_BASE_URL,
+      env: { PORT: String(demoApiPort), APP_NO_OPEN: '1' },
       reuseExistingServer: false,
     },
   ],

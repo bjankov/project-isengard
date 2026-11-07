@@ -70,6 +70,19 @@ export interface SettingsMutationResponse {
   commit: CommitInfo | null;
 }
 
+/** An entity added back by Settings → Restore defaults (a built-in pattern or demo content). */
+export interface RestoredEntity {
+  kind: EntityKind;
+  id: string;
+  name: string;
+  version: string;
+}
+
+export interface RestoreDefaultsResponse {
+  restored: RestoredEntity[];
+  commit: CommitInfo | null;
+}
+
 export interface ReferencedErrorBody {
   error: 'conflict';
   message: string;

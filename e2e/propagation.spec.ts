@@ -278,7 +278,7 @@ test('Restore defaults brings back a deleted built-in pattern', async ({ page })
   expect(del.ok()).toBe(true);
   await page.goto('/settings');
   await page.getByRole('button', { name: 'Restore defaults' }).click();
-  await expect(page.getByText('Restored 1 built-in pattern')).toBeVisible();
+  await expect(page.getByText('Restored 1 default')).toBeVisible();
   const status = await get<{ current: string }>(page, `/api/patterns/${id}/versions`);
   expect(status.current).toBe('v2');
 });

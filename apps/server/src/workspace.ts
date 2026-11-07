@@ -5,7 +5,7 @@
  */
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, realpath, stat } from 'node:fs/promises';
+import { mkdir, readdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, normalize, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
@@ -163,6 +163,34 @@ export async function initWorkspace(input: string, libraryDir: string): Promise<
   if (before.status !== 'not-a-repo') return before;
   await execFileAsync('git', ['-C', before.path, 'init', '--quiet']);
   return checkWorkspace(before.path, libraryDir);
+}
+
+/**
+ * Create the demo workspace (PLAN.md 9.6) unless it is already a git repo: the folder, `git
+ * init`, and one commit with a README, so the repo has a HEAD (the `diff` context mode and v2
+ * checkpoints need one). The app's own folder, so the commit uses the app's identity.
+ * Returns whether anything was created.
+ */
+export async function ensureDemoWorkspace(path: string, readme: string): Promise<boolean> {
+  if (existsSync(join(path, '.git'))) return false;
+  await mkdir(path, { recursive: true });
+  const git = (...args: string[]) =>
+    execFileAsync('git', [
+      '-C',
+      path,
+      '-c',
+      'user.name=Workflow Designer',
+      '-c',
+      'user.email=app@localhost',
+      '-c',
+      'commit.gpgsign=false',
+      ...args,
+    ]);
+  await git('init', '--quiet');
+  if (!existsSync(join(path, 'README.md'))) await writeFile(join(path, 'README.md'), readme);
+  await git('add', 'README.md');
+  await git('commit', '--quiet', '-m', 'Create the demo workspace');
+  return true;
 }
 
 /** Folders whose path starts with what was typed so far. */

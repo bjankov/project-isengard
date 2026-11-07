@@ -13,12 +13,15 @@ import {
   makeEntityId,
   normalizeMergeNote,
   pruneLocal,
+  repinAll,
   safeParseEntity,
   versionName,
   versionNumber,
   versionTagName,
   type BranchInfo,
   type CommitInfo,
+  type RestoredEntity,
+  type DemoContent,
   type DiffResponse,
   type AnyEntity,
   type EntityByKind,
@@ -28,7 +31,6 @@ import {
   type EntityVersionSummary,
   type FileDiff,
   type HistoryResponse,
-  type Pattern,
   type ReferencesResponse,
   type VersionStatus,
 } from '@app/schema';
@@ -39,6 +41,21 @@ import { DEFAULT_SETTINGS } from './default-settings.js';
 import { LAYOUTS, fromYaml, toYaml, type KindLayout } from './layout.js';
 
 const SETTINGS_PATH = 'settings.yaml';
+
+/** An entity the app ships with: a built-in pattern or demo content. */
+interface DefaultEntity {
+  kind: EntityKind;
+  entity: AnyEntity;
+}
+
+function demoEntities(demo: DemoContent): DefaultEntity[] {
+  return [
+    ...demo.skills.map((entity) => ({ kind: 'skill' as const, entity })),
+    ...demo.tools.map((entity) => ({ kind: 'tool' as const, entity })),
+    ...demo.agents.map((entity) => ({ kind: 'agent' as const, entity })),
+    ...demo.projects.map((entity) => ({ kind: 'project' as const, entity })),
+  ];
+}
 
 export class NotFoundError extends Error {
   /** `what`: e.g. `version "v9"`, for something missing from an existing entity. */
@@ -200,8 +217,18 @@ export class LibraryStore {
     private index: LibraryIndex,
   ) {}
 
-  /** Open (initializing if needed) the library store and bring the index up to date. */
-  static async open(libraryDir: string, indexPath: string): Promise<LibraryStore> {
+  /** Whether this library was created by `open` (the app's first launch with it). */
+  firstLaunch = false;
+
+  /**
+   * Open (initializing if needed) the library store and bring the index up to date. A new
+   * library also gets `demo`, the demo content (PLAN.md 9.6).
+   */
+  static async open(
+    libraryDir: string,
+    indexPath: string,
+    opts: { demo?: DemoContent } = {},
+  ): Promise<LibraryStore> {
     await mkdir(libraryDir, { recursive: true });
     const git = new LibraryGit(libraryDir);
     if (!git.isRepo()) await git.init();
@@ -209,6 +236,7 @@ export class LibraryStore {
     const store = new LibraryStore(git, new LibraryIndex(indexPath));
 
     if (!(await git.head(MAIN_REF))) {
+      store.firstLaunch = true;
       const ops: TreeOp[] = [{ op: 'write', path: 'README.md', content: LIBRARY_README }];
       for (const kind of ENTITY_KINDS)
         ops.push({ op: 'write', path: `${LAYOUTS[kind].dir}/.gitkeep`, content: '' });
@@ -224,6 +252,13 @@ export class LibraryStore {
 
     await store.tagUnversionedEntities();
     await store.seedBuiltinPatterns();
+    if (store.firstLaunch && opts.demo) {
+      await store.addDefaults(
+        demoEntities(opts.demo),
+        { neverExisted: true },
+        () => 'Add the demo content',
+      );
+    }
     if (store.index.head !== (await git.head(MAIN_REF))) await store.rebuildIndex();
     return store;
   }
@@ -315,66 +350,100 @@ export class LibraryStore {
    * here; Settings → Restore defaults (M6) does that on request.
    */
   private async seedBuiltinPatterns(): Promise<void> {
-    const missing: Pattern[] = [];
-    for (const pattern of BUILTIN_PATTERNS) {
-      if (!(await this.idTaken('pattern', pattern.id))) missing.push(pattern);
-    }
-    if (missing.length === 0) return;
-    const entities = missing.map((p) => this.validate('pattern', p.id, p));
-    await this.commitToMain(
-      entities.flatMap((e) => this.writeOps('pattern', e)),
-      missing.length === BUILTIN_PATTERNS.length
-        ? 'Add the built-in patterns'
-        : `Add built-in patterns: ${missing.map((p) => p.name).join(', ')}`,
-      {
-        refOps: (hash) =>
-          missing.map((p) => ({
-            op: 'create' as const,
-            ref: entityRefs('pattern', p.id).tag(versionName(1)),
-            value: hash,
-          })),
-      },
+    await this.addDefaults(
+      BUILTIN_PATTERNS.map((entity) => ({ kind: 'pattern', entity })),
+      { neverExisted: true },
+      (added) =>
+        added.length === BUILTIN_PATTERNS.length
+          ? 'Add the built-in patterns'
+          : `Add built-in patterns: ${added.map((a) => a.name).join(', ')}`,
     );
   }
 
   /**
-   * Settings → Restore defaults (PLAN.md 8.4): add back every built-in pattern missing from main
-   * under its old id, as its next version (`v1` if it never existed). Built-ins that exist,
-   * edited or not, are not touched.
+   * Settings → Restore defaults (PLAN.md 8.4): add back every built-in pattern, and every demo
+   * entity when `demo` is given, that is missing from main, under its old id and as its next
+   * version (`v1` if it never existed). Entities that exist, edited or not, are not touched.
    */
-  async restoreBuiltinPatterns(): Promise<{
-    restored: { id: string; name: string; version: string }[];
+  async restoreDefaults(demo?: DemoContent): Promise<{
+    restored: RestoredEntity[];
     commit: CommitInfo | null;
   }> {
     return this.git.exclusive(async () => {
-      const restored: { id: string; name: string; version: string }[] = [];
-      const entities: Pattern[] = [];
-      for (const pattern of BUILTIN_PATTERNS) {
-        if (await this.exists('pattern', pattern.id)) continue;
-        const tags = await this.git.listRefs(entityRefs('pattern', pattern.id).tagPrefix);
-        const version = versionName((versionsOf(tags)[0] ?? 0) + 1);
-        entities.push(this.validate('pattern', pattern.id, pattern));
-        restored.push({ id: pattern.id, name: pattern.name, version });
-      }
-      if (entities.length === 0) return { restored, commit: null };
-      const commit = requireCommit(
-        await this.commitToMain(
-          entities.flatMap((e) => this.writeOps('pattern', e)),
-          `Restore built-in patterns: ${restored.map((r) => r.name).join(', ')}`,
-          {
-            refOps: (hash) =>
-              restored.map((r) => ({
-                op: 'create' as const,
-                ref: entityRefs('pattern', r.id).tag(r.version),
-                value: hash,
-              })),
-          },
-        ),
-        'restore',
+      const candidates: DefaultEntity[] = [
+        ...BUILTIN_PATTERNS.map((entity) => ({ kind: 'pattern' as const, entity })),
+        ...(demo ? demoEntities(demo) : []),
+      ];
+      return this.addDefaults(
+        candidates,
+        { neverExisted: false },
+        (added) => `Restore defaults: ${added.map((a) => a.name).join(', ')}`,
       );
-      for (const e of entities) this.index.upsert(this.entryOf('pattern', e), commit.hash);
-      return { restored, commit };
     });
+  }
+
+  /**
+   * Add the `candidates` missing from main in one commit, each tagged with its next version.
+   * `neverExisted`: skip entities that existed before (deleted ones stay deleted). References
+   * between defaults are pinned to the current version of their target, the M2 rule for new
+   * references. Callers hold the git lock (or run before the app serves requests).
+   */
+  private async addDefaults(
+    candidates: DefaultEntity[],
+    opts: { neverExisted: boolean },
+    message: (added: RestoredEntity[]) => string,
+  ): Promise<{ restored: RestoredEntity[]; commit: CommitInfo | null }> {
+    const current = new Map<string, string>();
+    const added: { kind: EntityKind; entity: AnyEntity; version: string }[] = [];
+    for (const { kind, entity } of candidates) {
+      const status = await this.statusOrNull(kind, entity.id);
+      if (status?.current && (await this.exists(kind, entity.id))) {
+        current.set(`${kind}/${entity.id}`, status.current);
+        continue;
+      }
+      if (opts.neverExisted && (await this.idTaken(kind, entity.id))) continue;
+      const tags = await this.git.listRefs(entityRefs(kind, entity.id).tagPrefix);
+      const version = versionName((versionsOf(tags)[0] ?? 0) + 1);
+      current.set(`${kind}/${entity.id}`, version);
+      added.push({ kind, entity, version });
+    }
+    const restored = added.map((a) => ({
+      kind: a.kind,
+      id: a.entity.id,
+      name: a.entity.name,
+      version: a.version,
+    }));
+    if (added.length === 0) return { restored, commit: null };
+    const entities = added.map((a) => ({
+      kind: a.kind,
+      entity: this.validate(
+        a.kind,
+        a.entity.id,
+        repinAll(a.kind, a.entity, (r) => current.get(`${r.kind}/${r.id}`)),
+      ),
+    }));
+    const text = message(restored);
+    const commit = requireCommit(
+      await this.commitToMain(
+        entities.flatMap((e) => this.writeOps(e.kind, e.entity)),
+        text,
+        {
+          refOps: (hash) =>
+            added.map((a) => ({
+              op: 'create' as const,
+              ref: entityRefs(a.kind, a.entity.id).tag(a.version),
+              value: hash,
+            })),
+        },
+      ),
+      text,
+    );
+    for (const e of entities) this.index.upsert(this.entryOf(e.kind, e.entity), commit.hash);
+    return { restored, commit };
+  }
+
+  private async statusOrNull(kind: EntityKind, id: string): Promise<VersionStatus | null> {
+    return (await this.exists(kind, id)) ? this.statusOf(kind, id) : null;
   }
 
   /**

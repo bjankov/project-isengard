@@ -11,6 +11,7 @@ export * from './workflow/validate.js';
 export * from './workflow/patterns.js';
 export * from './workflow/check.js';
 export * from './builtin-patterns.js';
+export * from './demo-content.js';
 export * from './glob.js';
 export * from './entities.js';
 export * from './api.js';
