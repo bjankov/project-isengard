@@ -8,7 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   BUILTIN_PATTERNS,
@@ -79,7 +79,7 @@ let workspace: string;
 beforeEach(() => {
   // Resolve symlinks (macOS: /var -> /private/var) so paths match what git reports.
   home = realpathSync(mkdtempSync(join(tmpdir(), 'app-test-')));
-  config = loadConfig({ APP_HOME: home });
+  config = loadConfig({ APP_HOME: home, APP_DEMO: '0' });
   workspace = join(home, 'workspace');
   mkdirSync(workspace);
   execFileSync('git', ['init', '-q'], { cwd: workspace });
@@ -126,8 +126,12 @@ describe('startup', () => {
     for (const dir of ['skills', 'tools', 'agents', 'patterns', 'templates', 'projects']) {
       expect(existsSync(join(config.libraryDir, dir, '.gitkeep'))).toBe(true);
     }
-    const health = await api<{ ok: boolean; libraryHead: string }>('GET', '/api/health');
+    const health = await api<{ ok: boolean; libraryHead: string; homeDir: string }>(
+      'GET',
+      '/api/health',
+    );
     expect(health.body.ok).toBe(true);
+    expect(health.body.homeDir).toBe(homedir());
     expect(health.body.libraryHead).toBe(git('rev-parse', 'HEAD').trim());
   });
 
@@ -1139,6 +1143,22 @@ describe('workflow checks', () => {
     expect(refused.body.error).toBe('workflow');
     expect(refused.body.message).toMatch(/Can’t merge/);
     expect(refused.body.problems.map((p) => p.rule)).toEqual(['exit-unconnected']);
+
+    // A decision v2 couldn't run (no instructions for the reviewer) saves, but can't merge.
+    const noInstructions = structuredClone(withDecision);
+    (
+      noInstructions.workflow.nodes[2] as { evaluator: { instructions: string } }
+    ).evaluator.instructions = '';
+    expect((await api('PUT', `/api/projects/${id}`, noInstructions)).status).toBe(200);
+    const incomplete = await api<{ problems: { rule: string }[] }>(
+      'POST',
+      `/api/projects/${id}/merge`,
+    );
+    expect(incomplete.status).toBe(400);
+    expect(incomplete.body.problems.map((p) => p.rule).sort()).toEqual([
+      'evaluator-incomplete',
+      'exit-unconnected',
+    ]);
 
     // Library rules run on merge too: an agent that doesn't exist is an error.
     const missingAgent = structuredClone(withDecision);

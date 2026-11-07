@@ -10,6 +10,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { CascadeDialog } from '@/components/cascade-dialog';
+import { GlobalShortcuts } from '@/components/shortcuts';
+import { ThemeSwitch } from '@/components/theme-switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useServerStatus } from '@/stores/server-status';
@@ -89,10 +91,11 @@ export function AppShell() {
           <span>Workflow Designer</span>
         </div>
         <nav className="flex items-center gap-1" aria-label="Main">
-          {TABS.map(({ path, label, icon: Icon }) => (
+          {TABS.map(({ path, label, icon: Icon }, i) => (
             <NavLink
               key={path}
               to={path}
+              title={`${label} (G then ${String(i + 1)})`}
               className={({ isActive }) =>
                 cn(
                   'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground',
@@ -105,8 +108,10 @@ export function AppShell() {
             </NavLink>
           ))}
         </nav>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-3">
           <ServerIndicator />
+          <GlobalShortcuts />
+          <ThemeSwitch />
         </div>
       </header>
       <main className="min-h-0 flex-1 overflow-auto">

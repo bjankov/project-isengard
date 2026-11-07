@@ -56,7 +56,7 @@ async function ok<T>(
 
 beforeEach(async () => {
   home = realpathSync(mkdtempSync(join(tmpdir(), 'app-m6-')));
-  config = loadConfig({ APP_HOME: home });
+  config = loadConfig({ APP_HOME: home, APP_DEMO: '0' });
   workspace = join(home, 'workspace');
   mkdirSync(workspace);
   execFileSync('git', ['init', '-q'], { cwd: workspace });
@@ -473,7 +473,7 @@ describe('restore defaults', () => {
       'POST',
       '/api/settings/restore-defaults',
     );
-    expect(res.restored).toEqual([{ id, name: 'Maker-checker', version: 'v2' }]);
+    expect(res.restored).toEqual([{ kind: 'pattern', id, name: 'Maker-checker', version: 'v2' }]);
     expect((await api('GET', `/api/patterns/${id}`)).status).toBe(200);
     const again = await ok<{ restored: unknown[] }>('POST', '/api/settings/restore-defaults');
     expect(again.restored).toEqual([]);

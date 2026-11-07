@@ -5,6 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Agentic Workflow Designer</title>
+    <script>
+      // Apply the theme before the first paint (same key and rules as src/stores/theme.ts).
+      (function () {
+        var p;
+        try {
+          p = localStorage.getItem('app.theme');
+        } catch (e) {}
+        var dark =
+          p === 'dark' ||
+          (p !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        if (dark) document.documentElement.classList.add('dark');
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

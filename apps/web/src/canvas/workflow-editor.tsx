@@ -36,14 +36,16 @@ import {
   MiniMap,
   ReactFlow,
   useReactFlow,
+  useStore,
   type Connection,
+  type ReactFlowState,
   type EdgeChange,
   type FinalConnectionState,
   type NodeChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { BookmarkPlus, Redo2, Undo2 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { toast } from 'sonner';
 import { EditorHeader } from '@/components/editor-header';
@@ -51,6 +53,7 @@ import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useEntityEditor, type EditorSourceReady } from '@/hooks/use-entity-editor';
+import { dialogOpen, isEditableTarget, isMac } from '@/lib/keys';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useUndoHistory } from '@/hooks/use-undo';
 import { useEntities } from '@/stores/library';
@@ -84,9 +87,11 @@ import { ContextPreview } from './context-preview';
 import { ProblemsPanel } from './problems-panel';
 import { SaveAsTemplateDialog } from './save-as-template';
 import { useWorkflowCheck } from './use-workflow-check';
+import { nodeStatuses } from './node-status';
+import { useTheme } from '@/stores/theme';
 
 const GRID = 16;
-const FIT_VIEW = { padding: 0.25, maxZoom: 1 };
+const FIT_VIEW = { padding: 0.08, maxZoom: 1 };
 const DEFAULT_SIZE = { width: 224, height: 72 };
 const NOTE_SIZE = { width: 224, height: 112 };
 
@@ -117,24 +122,57 @@ let clipboard:
 
 const snap = (v: number) => Math.round(v / GRID) * GRID;
 
-function isEditableTarget(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLElement &&
-    !!target.closest('input, textarea, select, [contenteditable="true"], .monaco-editor')
-  );
-}
-
-function dialogOpen(): boolean {
-  return !!document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"]');
-}
-
-const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
-
 /**
  * The workflow canvas, for a project's workflow or a pattern's graph (PLAN.md 7.7: patterns
  * are edited on the same canvas). Patterns use slots instead of agents and have repeat groups;
  * projects have overrides, a workspace, templates and the context preview.
  */
+/**
+ * Edges whose source or target node is measured but lacks the edge's handle, newline-separated
+ * (a string, so the store selector only re-renders when the answer changes). Nodes not
+ * measured yet are left out: React Flow waits for those by itself.
+ */
+function edgesWithoutHandles(s: ReactFlowState, edges: readonly FlowEdge[]): string {
+  const has = (node: string, type: 'source' | 'target', handle: string | null | undefined) => {
+    const bounds = s.nodeLookup.get(node)?.internals.handleBounds;
+    if (!bounds) return true;
+    const list = bounds[type] ?? [];
+    return handle ? list.some((h) => h.id === handle) : list.length > 0;
+  };
+  const missing: string[] = [];
+  for (const e of edges) {
+    if (!has(e.source, 'source', e.sourceHandle) || !has(e.target, 'target', e.targetHandle)) {
+      missing.push(e.id);
+    }
+  }
+  return missing.join('\n');
+}
+
+/**
+ * Reuse the previous object for an item (node or edge) when nothing about it changed: the
+ * same `content` (its workflow node or edge, compared by identity) and the same everything
+ * else (compared by value). React Flow and the memoized views then skip unchanged items.
+ */
+function stableItems<T extends { id: string; data?: object }>(
+  cache: Map<string, { sig: string; item: T }>,
+  items: T[],
+  content: (item: T) => unknown,
+): T[] {
+  const seen = new Set<string>();
+  const out = items.map((item) => {
+    seen.add(item.id);
+    const c = content(item);
+    // Everything but the content, by value; the content is compared by identity below.
+    const sig = JSON.stringify(item, (_key, value: unknown) => (value === c ? undefined : value));
+    const prev = cache.get(item.id);
+    if (prev && prev.sig === sig && content(prev.item) === c) return prev.item;
+    cache.set(item.id, { sig, item });
+    return item;
+  });
+  for (const id of [...cache.keys()]) if (!seen.has(id)) cache.delete(id);
+  return out;
+}
+
 export function WorkflowEditor({
   kind,
   source,
@@ -149,6 +187,7 @@ export function WorkflowEditor({
   const settings = useSettings();
   const tools = useEntities('tool');
   const flow = useReactFlow();
+  const colorMode = useTheme((s) => s.resolved);
   const wrapper = useRef<HTMLDivElement>(null);
   const entityId = source.saved?.id ?? '';
   const isPattern = kind === 'pattern';
@@ -288,6 +327,12 @@ export function WorkflowEditor({
     return new Map(flat.graph.nodes.map((n) => [n.id, n]));
   }, [graph, lookup]);
 
+  const statusOf = useMemo(() => nodeStatuses(graph, loops, check), [graph, loops, check]);
+  // Node and edge objects keep their identity while nothing about them changes (see
+  // `stableItems`), so memoized node views skip re-rendering.
+  const [nodeCache] = useState(() => new Map<string, { sig: string; item: FlowNode }>());
+  const [edgeCache] = useState(() => new Map<string, { sig: string; item: FlowEdge }>());
+
   const view = useMemo(() => {
     const ctx: ExpandContext = { lookup, expanded, bound, progress };
     const flowNodes: FlowNode[] = [];
@@ -364,6 +409,7 @@ export function WorkflowEditor({
             inner: true,
             ...(open !== undefined ? { open } : {}),
             ...(box ? { box } : {}),
+            status: statusOf(inner.id),
           },
           draggable: false,
           // Agents inside take per-project overrides, so they can be selected (in a project).
@@ -445,7 +491,7 @@ export function WorkflowEditor({
           position,
           // The node has its final size from the start (resizing it every animation frame
           // makes the resize observer loop); only the box drawn inside it grows.
-          data: { node: n, open, box: frame.open },
+          data: { node: n, open, box: frame.open, status: statusOf(n.id) },
           selected: selection.nodes.includes(n.id),
           width: frame.full.width,
           height: frame.full.height,
@@ -458,7 +504,7 @@ export function WorkflowEditor({
         id: n.id,
         type: flowNodeType(n.type),
         position,
-        data: { node: n },
+        data: { node: n, status: statusOf(n.id) },
         selected: selection.nodes.includes(n.id),
         measured: measured[n.id],
       };
@@ -482,8 +528,15 @@ export function WorkflowEditor({
       });
     });
 
-    return { nodes: flowNodes, edges: [...edges, ...innerEdges], shift };
+    return {
+      nodes: stableItems(nodeCache, flowNodes, (n) => n.data.node),
+      edges: stableItems(edgeCache, [...edges, ...innerEdges], (e) => e.data?.edge),
+      shift,
+    };
   }, [
+    nodeCache,
+    edgeCache,
+    statusOf,
     kind,
     graph,
     doc.layout.nodes,
@@ -498,7 +551,18 @@ export function WorkflowEditor({
   ]);
 
   const nodes = view.nodes;
-  const edges = view.edges;
+  // An edge is drawn once both its handles exist. When a pattern collapses, its node keeps
+  // the expanded frame's measurements (no port handles) for one frame; React Flow can't draw
+  // the edges to its ports then, and warns.
+  const waiting = useStore(
+    useCallback((s: ReactFlowState) => edgesWithoutHandles(s, view.edges), [view.edges]),
+  );
+  const edges = useMemo(() => {
+    if (!waiting) return view.edges;
+    const ids = new Set(waiting.split('\n'));
+    // Left out, not `hidden`: React Flow positions hidden edges too.
+    return view.edges.filter((e) => !ids.has(e.id));
+  }, [view.edges, waiting]);
   const shift = view.shift;
 
   const onNodesChange = useCallback(
@@ -904,40 +968,40 @@ export function WorkflowEditor({
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
         deleteSelection();
+      } else if (!mod && !e.altKey && key === 'f') {
+        e.preventDefault();
+        void flow.fitView({ ...FIT_VIEW, duration: 250 });
+      } else if (e.key === 'Escape') {
+        setSelection({ nodes: [], edges: [] });
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [history, copy, paste, deleteSelection, graph.nodes, after, kind]);
+  }, [history, copy, paste, deleteSelection, graph.nodes, after, kind, flow]);
 
+  // The context must stay stable while editing (every node reads it), so `repin` goes through
+  // a ref to the latest `change`, which changes with every edit.
+  const changeRef = useRef(change);
+  useLayoutEffect(() => {
+    changeRef.current = change;
+  }, [change]);
+  const patternLookup = check.resolver.pattern;
   const context: CanvasContextValue = useMemo(
     () => ({
       kind,
-      graph,
       overrides: doc.overrides,
       repeat: doc.repeat,
-      loops,
-      check,
+      patterns: patternLookup,
       settings,
       tools,
       expanded,
       toggleExpanded,
       repin: (location: string, version: string) =>
-        change((d) => repin('project', d as unknown as Project, location, version) as never),
+        changeRef.current(
+          (d) => repin('project', d as unknown as Project, location, version) as never,
+        ),
     }),
-    [
-      kind,
-      graph,
-      doc.overrides,
-      doc.repeat,
-      loops,
-      check,
-      settings,
-      tools,
-      expanded,
-      toggleExpanded,
-      change,
-    ],
+    [kind, doc.overrides, doc.repeat, patternLookup, settings, tools, expanded, toggleExpanded],
   );
 
   const shortcut = (k: string) => `${isMac ? '⌘' : 'Ctrl+'}${k}`;
@@ -1067,11 +1131,17 @@ export function WorkflowEditor({
                 snapGrid={[GRID, GRID]}
                 fitView
                 fitViewOptions={FIT_VIEW}
+                colorMode={colorMode}
                 minZoom={0.2}
                 maxZoom={2}
               >
                 <Background variant={BackgroundVariant.Dots} gap={GRID} size={1} />
-                <MiniMap pannable zoomable className="!rounded-md !border" />
+                <MiniMap
+                  pannable
+                  zoomable
+                  className="!rounded-md !border"
+                  style={{ width: 160, height: 104 }}
+                />
                 <Controls showInteractive={false} fitViewOptions={FIT_VIEW} />
               </ReactFlow>
             </CanvasContext.Provider>

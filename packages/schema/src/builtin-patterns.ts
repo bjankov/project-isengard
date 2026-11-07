@@ -372,6 +372,8 @@ const ensemble = new Builder()
     'Several members answer the same task in parallel; an aggregator combines or votes on their answers.',
   );
 
+// The shared store sits top left, before both readers: only the write edge runs backwards,
+// and the canvas draws it as an arc over the top row.
 const discussion = new Builder()
   .input('in', 'Topic', [0, 1])
   .slot(
@@ -388,7 +390,7 @@ const discussion = new Builder()
     routeEvaluator,
   )
   .slot('participant', 'Participant', 'Reads the transcript and adds one contribution.', [3, 0])
-  .store('transcript', 'Transcript', [2, 0])
+  .store('transcript', 'Transcript', [0, 0])
   .output('out', 'Conclusion', [3, 2])
   .edge('in', 'moderator')
   .edge('moderator', 'next')
@@ -426,7 +428,7 @@ const blackboard = new Builder()
     'Reads the blackboard and improves the part of the solution it knows about.',
     [3, 0],
   )
-  .store('board', 'Blackboard', [2, 0])
+  .store('board', 'Blackboard', [0, 0])
   .output('out', 'Solution', [3, 2])
   .edge('in', 'controller')
   .edge('controller', 'pick')

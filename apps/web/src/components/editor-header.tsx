@@ -23,6 +23,7 @@ import { OutdatedUsers } from '@/components/cascade-dialog';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { VersionActions, VersionIndicator } from '@/components/versioning';
+import { modKey } from '@/lib/keys';
 import { cn } from '@/lib/utils';
 import type { Versioning } from '@/hooks/use-entity-editor';
 
@@ -46,8 +47,6 @@ interface EditorHeaderProps {
   /** Version badge, branch indicator, history, merge and discard (versioned entities). */
   versioning?: Versioning;
 }
-
-const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
 
 export function EditorHeader({
   title,
@@ -124,7 +123,7 @@ export function EditorHeader({
             Save
           </Button>
         </TooltipTrigger>
-        <TooltipContent>{isMac ? '⌘S' : 'Ctrl+S'}</TooltipContent>
+        <TooltipContent>{modKey('S')}</TooltipContent>
       </Tooltip>
 
       <AlertDialog open={confirming} onOpenChange={(open) => !open && close()}>

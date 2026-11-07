@@ -453,3 +453,95 @@ Format: date, milestone, decision, reason.
   - **Cause:** an EPIPE when writing to a git child's stdin after git had already exited. Most git commands never read stdin.
   - **Fix:** `LibraryGit.run` ignores errors on `child.stdin`. Failures still surface through git's exit code.
   - **Test:** a regression test reproduces the EPIPE deterministically.
+
+## 2026-11-07 (M7)
+
+### Agreed at planning (user decisions)
+- **Demo content is added when a library is first created** ("first launch", PLAN.md 9.6), never to an existing library automatically, so nothing collides with entities made by hand.
+- **Settings → Restore defaults also brings back missing demo entities and the demo workspace**, like the built-in patterns. This extends the PLAN.md 8.4 default, which named only patterns. It is also how a library created before M7 gets the demo content.
+- **The demo workspace is an empty git repo** at `$APP_HOME/demo-workspace` (normally `~/.app/demo-workspace`) with one commit holding a README. Not a sample codebase: the app isn't tied to any language, and in v1 nothing reads the workspace. The commit gives the repo a HEAD, which the `diff` context mode's "workspace HEAD" base and v2 checkpoints need. It is the app's own folder, so the commit uses the app's identity (`Workflow Designer <app@localhost>`, unsigned).
+- **No auto-layout ("Tidy up")**: it needed a new dependency. The demo layouts are placed by hand. Keep third-party packages to a minimum.
+- **The theme is a per-browser preference** (`localStorage` `app.theme`: light, dark or system), not part of the versioned `settings.yaml`.
+- **One-command launch (`npx app`) is deferred to v2** (`V2_BACKLOG.md`), since packaging may change once the engine exists.
+- **The product name stays the placeholder** ("Workflow Designer" in the UI).
+
+### Demo content
+- **Data in `packages/schema/src/demo-content.ts`**, like the built-in patterns, with fixed ids `<slug>-demo00`, so Restore defaults can tell what is missing.
+  - Skills: `plan-format`, `write-unit-tests`, `code-review-checklist`.
+  - Tool presets: Read workspace (`**`), Write plan (`PLAN.md`), Write source (`src/**`), Write tests (`tests/**`), Run tests (shell, exactly `npm test`), Web search. Each agent gets only what it needs, so both examples have no problems at all (a test checks it).
+  - Agents: Planner, Executor, Tester, Reviewer, Router (PLAN.md 9.6), plus **Researcher**, which answers the router's `question` branch and is the only user of Web search.
+  - **Plan, build, test** (demo 1): Task → Planner → PLAN.md → Executor → `src/**` → Tester → "Tests pass?" (deterministic), with the loop back to the Executor (max 3, summary, latest only). It also shows `excerpt` (PLAN.md's `## Tasks`) and `diff` (of `src/**`).
+  - **Ticket router** (demo 2): Ticket → "What kind of ticket?" (agent evaluator: Router) → bug: a Maker-checker instance (Executor and Reviewer), question: Researcher, feature: Planner → "Approve the plan?" (human, a reject loop of max 2 with all feedback) → Reply (join any).
+  - **Notes on both canvases explain what the user sees** (where to start, what edges control, the loop, the context preview, the pattern, the human approval). They are the "understand without explanation" part of the M7 done-when.
+- **References pin `v1` in the data and are re-pinned when added** (`repinAll`): a reference to a demo entity or built-in pattern pins that entity's current version (the M2 rule for new references). This matters for Restore defaults, e.g. a restored Ticket router pins Maker-checker v2 if the user merged one.
+- **One routine adds defaults** (`addDefaults` in the library store), in one commit with each entity's next version tag: the built-in patterns that never existed (every start), the demo content (first launch) and Restore defaults (anything missing from `main`).
+- **`APP_DEMO=0` starts without demo content.** The unit and API tests and the existing browser tests use it, so they keep starting from an empty library. `RestoreDefaultsResponse` (now in `@app/schema`) lists the kind of each restored entity.
+
+### Layout and canvas
+- **The example layouts read at about 75% zoom on a 1440 px wide screen** (the canvas between the palette and the inspector is about 890 px wide). Demo 1 is two rows, demo 2 has its three branches stacked.
+- **Zoom to fit pads 8% instead of 25%**, and the **minimap is smaller** (160 × 104), so it covers less of the canvas.
+- **An edge running right to left between nodes on about the same row is drawn as an arc over the row**, instead of an S through it. With that, the shared store in **Moderated discussion** and **Blackboard** moves to the top left (before both readers): only the write edge runs backwards, and nothing crosses (the M5 open issue). **Libraries that already have these built-ins keep the old layout**: changing them there would be a new version the user didn't ask for. Delete and Restore defaults gets the new one.
+
+### Dark mode
+- **The accent palette is redefined under `.dark`** (`index.css`): components use Tailwind's palette directly for accents (node kinds, fork, update, loop and local-copy badges), pale shades (50–300) as backgrounds and borders and deep shades (600–950) as text. In dark mode those shades become dark tints and light text; 400 and 500 are unchanged. Every existing class adapts with no per-component `dark:` variants, and new code does too. shadcn's own tokens already had dark values.
+- **The theme is applied before the first paint** by a small script in `index.html` (same key and rules as `stores/theme.ts`), so there is no flash of the wrong theme.
+- **React Flow, Monaco and the toasts follow the theme.** Monaco gets two themes (`app-light`, `app-dark`) whose backgrounds match the app's.
+- **The switch is in the header**: three icons, light, dark and the system setting (the default).
+
+### Keyboard shortcuts
+- **`?`** opens the list of shortcuts (also the keyboard button in the header). **`G` then `1`–`6`** opens a tab in header order. On the canvas: **`F`** zooms to fit, **`Esc`** clears the selection. Global shortcuts don't fire while typing in a field or with a dialog open.
+- Key helpers (platform modifier, editable targets, open dialogs) are shared in `lib/keys.ts`; the palette hint shows ⌘ on macOS.
+
+### Toasts
+- **Bottom center, 56 px up**, above the problems bar (agreed in M4: bottom-left covered it). Top center was tried first, but toasts there covered header buttons such as **Hide advanced** in the skill editor (a browser test caught it).
+
+### Empty states and first-time help
+- **Searching a list with no matches** says so and offers **Clear search** (before, an empty kind showed nothing at all).
+- **No templates yet** explains how to make one.
+- **No projects** offers **Add the example projects** next to **New project** (it runs Restore defaults).
+- **A dismissible hint on the Projects page** points a new user at the first example, the notes on its canvas, and `?` (remembered per browser, `app.welcomeDismissed`).
+- **Project cards show the home folder as `~`** (agreed after M7's review), with the full path in a tooltip. The browser can't know the home folder, so `GET /api/health` now also returns `homeDir`. Only the cards shorten paths: the workspace field shows what is stored, and the stored path stays absolute.
+- The visual consistency pass found the tabs consistent (headers, spacing, badges); no structural changes were needed beyond dark mode.
+
+### Performance
+- **Measured on a 100-node workflow** (20 capped loops, 4 Maker-checker instances, notes). Before: opening 0.5 s, about 45 ms per keystroke in the inspector, dragging at about 20 fps (50 ms frames). After: about 19 ms per keystroke (one frame), dragging at 60 fps. Validation itself takes about 1.5 ms and was never the problem.
+- **Causes and fixes:**
+  - for projects, `toDoc` created a new empty `repeat` list on every render, which re-ran validation and rebuilt the canvas context on every drag step and keystroke; it now reuses one empty value
+  - every node read `graph`, `loops` and `check` from the context, so all of them re-rendered on any change, and each counted its join inputs over the whole graph several times. The editor now computes each node's status (problems, join, port inputs) once per change (`node-status.ts`) and passes it in the node's `data`; the context only holds values that rarely change (`repin` goes through a ref)
+  - node and edge objects keep their identity while nothing about them changed (`stableItems`), and node and edge views are memoized
+- **The library store spawns git directly** instead of through `simple-git`, whose `raw()` cost about 50 ms per call against about 3 ms. Startup went from 3.6 s to 0.6 s (0.9 s on a first launch with demo content), and every save and read got faster. `simple-git` is no longer a dependency. PLAN.md 5.2 named it; it was updated by agreement (2026-11-08).
+
+### Tests
+- **Unit and API:** `demo-content.test.ts` (the demo data is valid, references only demo entities and built-ins, has no problems, everything has a position; `repinAll`) and `apps/server/src/demo.test.ts` (first launch adds the content and the workspace; both examples pass the save and merge checks; it happens once; `APP_DEMO=0`; Restore defaults pins current versions and leaves edited entities alone).
+- **Browser (`e2e/first-launch.spec.ts`):** a second server pair (ports 4418 and 5300) starts like a first launch. It covers landing on a populated app, opening and changing both examples, dark mode, the shortcuts and the 100-node workflow with budgets (open < 4 s, a keystroke < 35 ms, the 90th-percentile frame while dragging < 34 ms). The 100-node fixture is `e2e/fixtures/hundred-nodes.ts`. The root package has `@app/schema` as a workspace dev dependency, for the demo ids.
+- **An M3 browser test** dragged the Result node to a point outside the canvas now that zoom to fit pads less; it now stays inside.
+
+### Design-for-v2 checklist (PLAN.md 12), checked at the end of the MVP
+- Every agent instance resolves to a pinned prompt, skill set, tool scopes, model, effort and limits: **yes.** Agent nodes, slot bindings and evaluator agents pin `{id, version}`; agents pin their skills and presets; overrides are keyed by node path; deleted entities resolve to local copies. A pin can name a fork branch, whose head moves: v2 should record the commit a run starts from (`V2_BACKLOG.md`).
+- Every edge has a payload type and a fully specified context mode: **yes.** Payload is stored. Each context mode carries its config (`summary` its model). Unset `history` means latest only. Unset `access` follows the direction (into a store writes, out of one reads); the editor always sets it.
+- Every decision has an evaluator, exit labels and caps on every back-edge: **yes.** Caps are enforced (an uncapped loop blocks saving). An evaluator with no code, criteria or reviewer instructions was only a warning; after the M7 review it is an error, so it blocks merging (see below).
+- Every join has a mode: **yes** (an error that blocks merging).
+- Artifacts have workspace-relative paths, tool steps a preset and arguments: **yes.** Arguments weren't checked; after the M7 review they are (see below).
+- Deterministic evaluator code is stored with its language: **yes.**
+- The workspace is a git repo: **yes** when a project is created or its path changes; it isn't checked again later (M3 decision).
+- **No schema change is needed** for any of these; the two gaps were validation rules, now closed.
+
+### Merging needs a version v2 can run (after the M7 review)
+Agreed rule: saving a draft is always possible (except an uncapped loop), merging only when the version is complete. Errors block merging; warnings don't.
+- **An incomplete evaluator is an error** (`evaluator-incomplete`): no evaluator code, no criteria for the evaluating agent, or no instructions for the reviewer. A newly added decision starts with empty code, so it shows red until the code is written.
+- **Tool step arguments are checked** (new rule `tool-args`, an error):
+  - each built-in's arguments are defined once, in `packages/schema` (`TOOL_STEP_ARGS`); the inspector reads them from there instead of its own list
+  - required ones must be filled in (shell: command; file tools: path; search: pattern, the folder is optional; web search: query; web fetch: URL)
+  - **shell:** the command must equal an exact rule, or start with a prefix rule followed by a space. Whitespace is collapsed first. A restricted shell never allows `; & | < > `` ` `` $(` or a newline, so `npm test && rm -rf .` can't pass as "npm test …". This also rejects harmless quoted uses like `--grep "a|b"`; a preset with a prefix rule for the whole command line is the way around it.
+  - **file tools:** the path must be workspace-relative and covered by the preset's globs; for search, the whole folder (`<path>/**`) must be covered
+  - **web fetch:** an http(s) URL whose host isn't denied, and is allowed when an allow list is set. `example.com` matches only that host; `*.example.com` matches its subdomains at any depth, not `example.com` itself.
+  - **web search:** only the query is required; the domain lists limit results, which a query can't break
+  - unrestricted shell stays a warning: it runs, by choice
+- **Other warnings stay warnings:** a single exit, an unreachable node and an unrestricted shell all run in v2, they are just worth a look.
+- **Changing a tool step's preset keeps the arguments the new built-in also takes** (e.g. the command, between two shell presets). Before, they were cleared, which with the new rule turned every preset switch into an error.
+
+### Collapsing a pattern without warnings (M5 open issue, fixed after the M7 review)
+- When a pattern collapses, its node keeps the expanded frame's measurements, without the port handles, until React Flow measures it again one frame later. Edges to its ports then couldn't be drawn, and React Flow logged "Couldn't create edge for … handle" for each.
+- **Fix:** an edge is left out of what React Flow gets while a node it touches is measured but lacks the edge's handle (`edgesWithoutHandles` in `workflow-editor.tsx`). Left out rather than `hidden`, because React Flow positions hidden edges too, and warns all the same. Nothing changes on screen: those edges couldn't be drawn in that frame anyway.
+- Silencing warning 008 through `onError` was not chosen: it would also hide real broken edges.
+

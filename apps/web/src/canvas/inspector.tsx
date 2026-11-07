@@ -8,13 +8,14 @@ import {
   type JoinMode,
   type WorkflowProblem,
   type ArtifactFileType,
-  type BuiltinToolId,
+  TOOL_STEP_ARGS,
   type ContextMode,
   type ContextModeName,
   type DecisionExit,
   type Evaluator,
   type PayloadType,
   type Settings,
+  type ToolPreset,
   type WorkflowEdge,
   type WorkflowNode,
   type WorkspaceCheck,
@@ -106,18 +107,11 @@ const CONTEXT_MODES: { value: ContextModeName; label: string; description: strin
 ];
 
 /** Arguments a tool step asks for, per built-in tool. */
-const TOOL_ARGS: Record<BuiltinToolId, { key: string; label: string; placeholder: string }[]> = {
-  shell: [{ key: 'command', label: 'Command', placeholder: 'npm test' }],
-  read_file: [{ key: 'path', label: 'Path', placeholder: 'src/index.ts' }],
-  write_file: [{ key: 'path', label: 'Path', placeholder: 'out/report.md' }],
-  edit_file: [{ key: 'path', label: 'Path', placeholder: 'src/index.ts' }],
-  search_files: [
-    { key: 'pattern', label: 'Pattern', placeholder: 'TODO' },
-    { key: 'path', label: 'In path', placeholder: 'src/' },
-  ],
-  web_search: [{ key: 'query', label: 'Query', placeholder: 'latest release notes' }],
-  web_fetch: [{ key: 'url', label: 'URL', placeholder: 'https://example.com' }],
-};
+/** When a tool step changes preset, the arguments the new preset's built-in also takes. */
+function keptArgs(args: Record<string, string>, preset: ToolPreset | undefined) {
+  const keys = new Set(preset ? TOOL_STEP_ARGS[preset.builtin].map((a) => a.key) : []);
+  return Object.fromEntries(Object.entries(args).filter(([k]) => keys.has(k)));
+}
 
 function defaultContext(mode: ContextModeName, settings: Settings | undefined): ContextMode {
   switch (mode) {
@@ -716,7 +710,7 @@ function ToolStepFields({
 }) {
   const tools = useEntities('tool');
   const preset = tools?.find((t) => t.id === node.tool.id);
-  const args = preset ? TOOL_ARGS[preset.builtin] : [];
+  const args = preset ? TOOL_STEP_ARGS[preset.builtin] : [];
   return (
     <>
       <Field label="Tool preset" htmlFor="node-tool" error={err('tool')}>
@@ -728,7 +722,14 @@ function ToolStepFields({
             set(
               (n) =>
                 n.type === 'toolStep'
-                  ? { ...n, tool: { kind: 'tool', id, version: n.tool.version }, args: {} }
+                  ? {
+                      ...n,
+                      tool: { kind: 'tool', id, version: n.tool.version },
+                      args: keptArgs(
+                        n.args,
+                        tools?.find((t) => t.id === id),
+                      ),
+                    }
                   : n,
               'tool',
             )
@@ -739,7 +740,11 @@ function ToolStepFields({
         </p>
       </Field>
       {args.map((a) => (
-        <Field key={a.key} label={a.label} htmlFor={`arg-${a.key}`}>
+        <Field
+          key={a.key}
+          label={a.required ? a.label : `${a.label} (optional)`}
+          htmlFor={`arg-${a.key}`}
+        >
           <Input
             id={`arg-${a.key}`}
             value={node.args[a.key] ?? ''}

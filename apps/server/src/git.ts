@@ -4,7 +4,6 @@ import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { simpleGit, type SimpleGit } from 'simple-git';
 
 const execFileAsync = promisify(execFile);
 
@@ -79,12 +78,10 @@ const FALLBACK_AUTHOR = { name: 'app', email: 'app@localhost' };
  */
 export class LibraryGit {
   readonly dir: string;
-  private readonly git: SimpleGit;
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(dir: string) {
     this.dir = dir;
-    this.git = simpleGit({ baseDir: dir });
   }
 
   /** Run `fn` exclusively (after every previously queued operation). */
@@ -99,7 +96,7 @@ export class LibraryGit {
   }
 
   async init(): Promise<void> {
-    await this.git.raw(['init', '--quiet', '-b', MAIN_BRANCH]);
+    await this.run(['init', '--quiet', '-b', MAIN_BRANCH]);
     await this.configure();
   }
 
@@ -110,19 +107,19 @@ export class LibraryGit {
    *   hardware key) would block each one. The user's global config is never touched.
    */
   async configure(): Promise<void> {
-    await this.git.raw(['config', '--local', 'commit.gpgsign', 'false']);
-    await this.git.raw(['config', '--local', 'tag.gpgsign', 'false']);
+    await this.run(['config', '--local', 'commit.gpgsign', 'false']);
+    await this.run(['config', '--local', 'tag.gpgsign', 'false']);
     for (const key of ['name', 'email'] as const) {
-      const current = await this.git.raw(['config', '--get', `user.${key}`]).catch(() => '');
+      const current = await this.run(['config', '--get', `user.${key}`]).catch(() => '');
       if (!current.trim())
-        await this.git.raw(['config', '--local', `user.${key}`, FALLBACK_AUTHOR[key]]);
+        await this.run(['config', '--local', `user.${key}`, FALLBACK_AUTHOR[key]]);
     }
   }
 
   async head(ref = MAIN_BRANCH): Promise<string | undefined> {
     try {
       return (
-        (await this.git.raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])).trim() ||
+        (await this.run(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])).trim() ||
         undefined
       );
     } catch {
@@ -132,7 +129,7 @@ export class LibraryGit {
 
   /** Names of the direct children of `dir` at `ref` (files and directories), without the prefix. */
   async listDir(dir: string, ref = MAIN_BRANCH): Promise<string[]> {
-    const out = await this.git.raw(['ls-tree', '--name-only', '-z', ref, `${dir}/`]);
+    const out = await this.run(['ls-tree', '--name-only', '-z', ref, `${dir}/`]);
     return out
       .split('\0')
       .filter(Boolean)
@@ -141,7 +138,7 @@ export class LibraryGit {
 
   /** All file paths under `path` at `ref`. Empty when the path does not exist. */
   async listFiles(path: string, ref = MAIN_BRANCH): Promise<string[]> {
-    const out = await this.git.raw(['ls-tree', '-r', '--name-only', '-z', ref, '--', path]);
+    const out = await this.run(['ls-tree', '-r', '--name-only', '-z', ref, '--', path]);
     return out.split('\0').filter(Boolean);
   }
 
@@ -149,7 +146,7 @@ export class LibraryGit {
   async readFile(path: string, ref = MAIN_BRANCH): Promise<string | undefined> {
     const exists = await this.listFiles(path, ref);
     if (!exists.includes(path)) return undefined;
-    return this.git.raw(['show', `${ref}:${path}`]);
+    return this.run(['show', `${ref}:${path}`]);
   }
 
   /** Run git directly, for plumbing that needs stdin or a custom environment. */
@@ -313,11 +310,11 @@ export class LibraryGit {
    */
   async syncWorkingTree(paths: string[]): Promise<void> {
     if (paths.length === 0) return;
-    await this.git.raw(['reset', '--quiet', '--', ...paths]).catch(() => undefined);
+    await this.run(['reset', '--quiet', '--', ...paths]).catch(() => undefined);
     // Per path: checkout fails as a whole if any one path is missing from HEAD.
     for (const p of paths) {
-      await this.git.raw(['checkout', '--quiet', 'HEAD', '--', p]).catch(() => undefined);
+      await this.run(['checkout', '--quiet', 'HEAD', '--', p]).catch(() => undefined);
     }
-    await this.git.raw(['clean', '-fdq', '--', ...paths]).catch(() => undefined);
+    await this.run(['clean', '-fdq', '--', ...paths]).catch(() => undefined);
   }
 }

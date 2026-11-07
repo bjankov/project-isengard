@@ -1,5 +1,6 @@
 import Editor from '@monaco-editor/react';
 import '@/lib/monaco-setup';
+import { useTheme } from '@/stores/theme';
 import type { CodeEditorProps } from './code-editor';
 
 export default function CodeEditorImpl({
@@ -10,8 +11,10 @@ export default function CodeEditorImpl({
   placeholder,
   ariaLabel,
 }: CodeEditorProps) {
+  const dark = useTheme((s) => s.resolved === 'dark');
   return (
     <Editor
+      theme={dark ? 'app-dark' : 'app-light'}
       value={value}
       language={language}
       height={height}

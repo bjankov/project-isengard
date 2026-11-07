@@ -21,6 +21,7 @@ import {
   type EntityMutationResponse,
   type FullListResponse,
   type ReferencedErrorBody,
+  type RestoreDefaultsResponse,
   type Settings,
   type SettingsMutationResponse,
   type SettingsResponse,
@@ -165,12 +166,9 @@ export const api = {
       body: JSON.stringify({ roots, accept, exclude }),
     }),
 
-  /** Settings → Restore defaults: add back deleted built-in patterns. */
+  /** Settings → Restore defaults: add back deleted built-in patterns and demo content. */
   restoreDefaults: () =>
-    apiFetch<{ restored: { id: string; name: string; version: string }[] }>(
-      '/settings/restore-defaults',
-      { method: 'POST' },
-    ),
+    apiFetch<RestoreDefaultsResponse>('/settings/restore-defaults', { method: 'POST' }),
 
   getSettings: () => apiFetch<SettingsResponse>('/settings'),
 

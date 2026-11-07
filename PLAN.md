@@ -92,7 +92,7 @@ TypeScript everywhere. No Python in the app's own code (user-written evaluator c
   - `packages/schema`: the single source of truth for all data types, defined with **Zod** and shared by frontend and backend.
   - `apps/server`: Node + **Fastify** (or Hono), REST API, git and SQLite access.
   - `apps/web`: **React** + **Vite**, **React Flow** (`@xyflow/react`) for the canvas, **Monaco** for code and markdown editing, **Tailwind** + **shadcn/ui** for components, **Zustand** for client state.
-- **Git:** `simple-git` wrapping the real `git` binary. Check on startup that git is installed and show a clear error if it isn't.
+- **Git:** the real `git` binary, spawned directly (no wrapper library). Check on startup that git is installed and show a clear error if it isn't.
 - **Index:** SQLite (`better-sqlite3`, optionally Drizzle) for search and reference lookups. **Git is the source of truth; the index must be rebuildable from the library store at any time.**
 - **Launch:** `pnpm dev` during development; a single `npx app` style command is the target for distribution.
 
@@ -465,4 +465,4 @@ Before finishing the MVP, confirm a v2 engine could execute a saved workflow **w
 - Everything is versioned in git. Instances pin versions. Updates are opt-in, via the cascade preview or per-instance icons.
 - Model, effort and limits are per-project overrides without branching; prompt, skills and tools changes fork.
 - No token estimates, no export, no execution in the MVP.
-- Stack: TypeScript end to end (React, React Flow, Monaco, Tailwind/shadcn, Fastify, simple-git, SQLite).
+- Stack: TypeScript end to end (React, React Flow, Monaco, Tailwind/shadcn, Fastify, the `git` binary, SQLite).

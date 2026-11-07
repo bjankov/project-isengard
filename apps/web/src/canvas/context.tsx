@@ -1,24 +1,19 @@
-import type {
-  AgentOverride,
-  LoopAnalysis,
-  RepeatGroup,
-  Settings,
-  ToolPreset,
-  WorkflowGraph,
-} from '@app/schema';
+import type { AgentOverride, PatternLookup, RepeatGroup, Settings, ToolPreset } from '@app/schema';
 import { createContext, useContext } from 'react';
 import type { CanvasKind } from './doc';
-import type { WorkflowCheck } from './use-workflow-check';
 
-/** Data the canvas nodes and edges need besides their own content. */
+/**
+ * Data the canvas nodes need besides their own content. Only things that change rarely: every
+ * node re-renders when this changes. What changes with each edit (problems, joins) reaches a
+ * node through its own `data.status`, so editing one node re-renders only the nodes it affects.
+ */
 export interface CanvasContextValue {
   kind: CanvasKind;
-  graph: WorkflowGraph;
   overrides: Record<string, AgentOverride>;
   /** The pattern's repeat groups (empty for projects). */
   repeat: RepeatGroup[];
-  loops: LoopAnalysis;
-  check: WorkflowCheck;
+  /** Pinned patterns, for the slots of an instance. */
+  patterns: PatternLookup | undefined;
   settings: Settings | undefined;
   tools: ToolPreset[] | undefined;
   /** Expanded pattern instances (paths), and expanding or collapsing one. */

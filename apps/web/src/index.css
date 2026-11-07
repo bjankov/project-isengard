@@ -48,6 +48,107 @@
   --ring: oklch(0.552 0.016 285.938);
 }
 
+/*
+ * Dark mode for the accent palette. Components use Tailwind's palette directly for accents
+ * (node kinds, fork / update / loop badges): pale tints (50–300) as backgrounds and borders,
+ * deep shades (600–950) as text. In dark mode those shades are redefined so the same classes
+ * mean dark tints and light text; mid shades (400, 500) are unchanged.
+ */
+.dark {
+  --color-amber-50: oklch(0.25 0.035 70.08);
+  --color-amber-100: oklch(0.29 0.05 70.08);
+  --color-amber-200: oklch(0.37 0.07 70.08);
+  --color-amber-300: oklch(0.46 0.09 70.08);
+  --color-amber-600: oklch(0.74 0.14 70.08);
+  --color-amber-700: oklch(0.8 0.12 70.08);
+  --color-amber-800: oklch(0.86 0.09 70.08);
+  --color-amber-900: oklch(0.91 0.06 70.08);
+  --color-amber-950: oklch(0.95 0.04 70.08);
+  --color-emerald-50: oklch(0.25 0.035 162.48);
+  --color-emerald-100: oklch(0.29 0.05 162.48);
+  --color-emerald-200: oklch(0.37 0.07 162.48);
+  --color-emerald-300: oklch(0.46 0.09 162.48);
+  --color-emerald-600: oklch(0.74 0.14 162.48);
+  --color-emerald-700: oklch(0.8 0.12 162.48);
+  --color-emerald-800: oklch(0.86 0.09 162.48);
+  --color-emerald-900: oklch(0.91 0.06 162.48);
+  --color-emerald-950: oklch(0.95 0.04 162.48);
+  --color-indigo-50: oklch(0.25 0.035 277.117);
+  --color-indigo-100: oklch(0.29 0.05 277.117);
+  --color-indigo-200: oklch(0.37 0.07 277.117);
+  --color-indigo-300: oklch(0.46 0.09 277.117);
+  --color-indigo-600: oklch(0.74 0.14 277.117);
+  --color-indigo-700: oklch(0.8 0.12 277.117);
+  --color-indigo-800: oklch(0.86 0.09 277.117);
+  --color-indigo-900: oklch(0.91 0.06 277.117);
+  --color-indigo-950: oklch(0.95 0.04 277.117);
+  --color-rose-50: oklch(0.25 0.035 16.439);
+  --color-rose-100: oklch(0.29 0.05 16.439);
+  --color-rose-200: oklch(0.37 0.07 16.439);
+  --color-rose-300: oklch(0.46 0.09 16.439);
+  --color-rose-600: oklch(0.74 0.14 16.439);
+  --color-rose-700: oklch(0.8 0.12 16.439);
+  --color-rose-800: oklch(0.86 0.09 16.439);
+  --color-rose-900: oklch(0.91 0.06 16.439);
+  --color-rose-950: oklch(0.95 0.04 16.439);
+  --color-sky-50: oklch(0.25 0.035 237.323);
+  --color-sky-100: oklch(0.29 0.05 237.323);
+  --color-sky-200: oklch(0.37 0.07 237.323);
+  --color-sky-300: oklch(0.46 0.09 237.323);
+  --color-sky-600: oklch(0.74 0.14 237.323);
+  --color-sky-700: oklch(0.8 0.12 237.323);
+  --color-sky-800: oklch(0.86 0.09 237.323);
+  --color-sky-900: oklch(0.91 0.06 237.323);
+  --color-sky-950: oklch(0.95 0.04 237.323);
+  --color-slate-50: oklch(0.25 0.011 257.417);
+  --color-slate-100: oklch(0.29 0.015 257.417);
+  --color-slate-200: oklch(0.37 0.021 257.417);
+  --color-slate-300: oklch(0.46 0.027 257.417);
+  --color-slate-600: oklch(0.74 0.042 257.417);
+  --color-slate-700: oklch(0.8 0.036 257.417);
+  --color-slate-800: oklch(0.86 0.027 257.417);
+  --color-slate-900: oklch(0.91 0.018 257.417);
+  --color-slate-950: oklch(0.95 0.012 257.417);
+  --color-teal-50: oklch(0.25 0.032 182.503);
+  --color-teal-100: oklch(0.29 0.045 182.503);
+  --color-teal-200: oklch(0.37 0.063 182.503);
+  --color-teal-300: oklch(0.46 0.081 182.503);
+  --color-teal-600: oklch(0.74 0.126 182.503);
+  --color-teal-700: oklch(0.8 0.108 182.503);
+  --color-teal-800: oklch(0.86 0.081 182.503);
+  --color-teal-900: oklch(0.91 0.054 182.503);
+  --color-teal-950: oklch(0.95 0.036 182.503);
+  --color-violet-50: oklch(0.25 0.039 292.717);
+  --color-violet-100: oklch(0.29 0.055 292.717);
+  --color-violet-200: oklch(0.37 0.077 292.717);
+  --color-violet-300: oklch(0.46 0.099 292.717);
+  --color-violet-600: oklch(0.74 0.154 292.717);
+  --color-violet-700: oklch(0.8 0.132 292.717);
+  --color-violet-800: oklch(0.86 0.099 292.717);
+  --color-violet-900: oklch(0.91 0.066 292.717);
+  --color-violet-950: oklch(0.95 0.044 292.717);
+  --color-yellow-50: oklch(0.25 0.035 86.047);
+  --color-yellow-100: oklch(0.29 0.05 86.047);
+  --color-yellow-200: oklch(0.37 0.07 86.047);
+  --color-yellow-300: oklch(0.46 0.09 86.047);
+  --color-yellow-600: oklch(0.74 0.14 86.047);
+  --color-yellow-700: oklch(0.8 0.12 86.047);
+  --color-yellow-800: oklch(0.86 0.09 86.047);
+  --color-yellow-900: oklch(0.91 0.06 86.047);
+  --color-yellow-950: oklch(0.95 0.04 86.047);
+  --color-stone-50: oklch(0.25 0.011 56);
+  --color-stone-100: oklch(0.29 0.015 56);
+  --color-stone-200: oklch(0.37 0.021 56);
+  --color-stone-300: oklch(0.46 0.027 56);
+  --color-stone-600: oklch(0.74 0.042 56);
+  --color-stone-700: oklch(0.8 0.036 56);
+  --color-stone-800: oklch(0.86 0.027 56);
+  --color-stone-900: oklch(0.91 0.018 56);
+  --color-stone-950: oklch(0.95 0.012 56);
+  --success: oklch(0.696 0.17 162.48);
+  --warning: oklch(0.769 0.165 70.08);
+}
+
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);

@@ -1,16 +1,31 @@
-import { slugify, type EntityInput, type Template, type WorkspaceCheck } from '@app/schema';
+import {
+  DEMO_IDS,
+  slugify,
+  type EntityInput,
+  type Template,
+  type WorkspaceCheck,
+} from '@app/schema';
 import { ReactFlowProvider } from '@xyflow/react';
-import { FolderGit2, FolderKanban, LayoutTemplate, Plus, Workflow } from 'lucide-react';
+import {
+  FolderGit2,
+  FolderKanban,
+  LayoutTemplate,
+  Lightbulb,
+  Plus,
+  Workflow,
+  X,
+} from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
+import { Kbd } from '@/canvas/kbd';
 import { WorkflowEditor } from '@/canvas/workflow-editor';
 import { Field } from '@/components/field';
 import { NotFound } from '@/components/library-layout';
 import { DraftBadge } from '@/components/versioning';
 import { NewWorkspaceFields, WorkspaceField, joinPath } from '@/components/workspace-field';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { readPreference, writePreference } from '@/hooks/use-preference';
+import { readPreference, useBooleanPreference, writePreference } from '@/hooks/use-preference';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -25,12 +40,40 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useEditorSource } from '@/hooks/use-entity-editor';
 import { ApiError, api } from '@/lib/api';
+import { tildePath } from '@/lib/paths';
 import { cn } from '@/lib/utils';
 import { issuesToErrors } from '@/lib/validation';
 import { useEntities, useLibrary, useVersions } from '@/stores/library';
+import { useServerStatus } from '@/stores/server-status';
 
 /** The last location a new workspace folder was created in (per browser). */
 const LOCATION_KEY = 'app.newWorkspaceLocation';
+
+/** Brings back the example projects (and anything else the app ships with) that were deleted. */
+function RestoreExamplesButton() {
+  const [busy, setBusy] = useState(false);
+  const load = useLibrary((st) => st.load);
+  const restore = async () => {
+    setBusy(true);
+    try {
+      const { restored } = await api.restoreDefaults();
+      await Promise.all([...new Set(restored.map((r) => r.kind))].map((k) => load(k)));
+      if (restored.some((r) => r.kind === 'project')) toast.success('Added the example projects');
+      else toast.info('Nothing to add', { description: 'Demo content is switched off.' });
+    } catch (err) {
+      toast.error('Could not add the examples', {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Button size="sm" variant="outline" disabled={busy} onClick={() => void restore()}>
+      Add the example projects
+    </Button>
+  );
+}
 
 /** A new blank workflow: an Input and an Output, ready to be connected. */
 function blankWorkflow(): Pick<EntityInput<'project'>, 'workflow' | 'layout'> {
@@ -50,7 +93,12 @@ export function ProjectsPage() {
   const projects = useEntities('project');
   const templates = useEntities('template');
   const versions = useVersions('project');
+  const status = useServerStatus((s) => s.status);
+  const homeDir = status.state === 'online' ? status.health.homeDir : undefined;
   const [creating, setCreating] = useState<{ template?: Template } | null>(null);
+  const [welcomeDismissed, setWelcomeDismissed] = useBooleanPreference('app.welcomeDismissed');
+  const welcome =
+    !welcomeDismissed && !!projects?.some((p) => p.id === DEMO_IDS.projects.planBuildTest);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -68,6 +116,38 @@ export function ProjectsPage() {
           </Button>
         </header>
 
+        {welcome && (
+          <div className="flex items-start gap-3 rounded-lg border bg-muted/40 px-4 py-3 text-sm">
+            <Lightbulb className="mt-0.5 size-4 shrink-0 text-amber-500" />
+            <p className="flex-1">
+              New here? Open{' '}
+              <Link
+                to={`/projects/${DEMO_IDS.projects.planBuildTest}`}
+                className="font-medium underline underline-offset-2"
+              >
+                Plan, build, test
+              </Link>
+              : the notes on its canvas explain what you see. Then try{' '}
+              <Link
+                to={`/projects/${DEMO_IDS.projects.ticketRouter}`}
+                className="font-medium underline underline-offset-2"
+              >
+                Ticket router
+              </Link>
+              . Press <Kbd>?</Kbd> for keyboard shortcuts.
+            </p>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="-my-1 size-7"
+              aria-label="Dismiss"
+              onClick={() => setWelcomeDismissed(true)}
+            >
+              <X />
+            </Button>
+          </div>
+        )}
+
         <section aria-label="Projects">
           {!projects ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
@@ -80,9 +160,12 @@ export function ProjectsPage() {
               <p className="mt-1 max-w-sm text-sm text-muted-foreground">
                 A project connects a workflow of agents to the git repo it works on.
               </p>
-              <Button className="mt-4" size="sm" onClick={() => setCreating({})}>
-                New project
-              </Button>
+              <div className="mt-4 flex items-center gap-2">
+                <Button size="sm" onClick={() => setCreating({})}>
+                  New project
+                </Button>
+                <RestoreExamplesButton />
+              </div>
             </div>
           ) : (
             <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -113,7 +196,9 @@ export function ProjectsPage() {
                     <div className="mt-auto pt-4 text-xs text-muted-foreground">
                       <div className="flex items-center gap-1.5 truncate font-mono">
                         <FolderGit2 className="size-3.5 shrink-0" />
-                        <span className="truncate">{p.workspacePath}</span>
+                        <span className="truncate" title={p.workspacePath}>
+                          {tildePath(p.workspacePath, homeDir)}
+                        </span>
                       </div>
                       <div className="mt-1">
                         {p.workflow.nodes.length} nodes · {p.workflow.edges.length} edges
@@ -154,7 +239,14 @@ export function ProjectsPage() {
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-muted-foreground">No templates yet.</p>
+            <div className="flex items-center gap-3 rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+              <LayoutTemplate className="size-4 shrink-0" />
+              <span>
+                No templates yet. Open a project and click{' '}
+                <span className="font-medium text-foreground">Save as template</span> to reuse its
+                workflow in new projects.
+              </span>
+            </div>
           )}
         </section>
       </div>

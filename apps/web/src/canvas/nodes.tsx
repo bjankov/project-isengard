@@ -1,16 +1,14 @@
 import {
   describeScope,
   isBranchVersion,
-  joinInputs,
-  joinLabel,
   listSlots,
   patternPorts,
-  portInputs,
   repeatCount,
   type AgentRef,
   type WorkflowNode,
   type WorkflowNodeType,
 } from '@app/schema';
+import { memo } from 'react';
 import {
   Handle,
   NodeResizer,
@@ -37,6 +35,7 @@ import { cn } from '@/lib/utils';
 import { usePinned } from '@/stores/pinned';
 import { useCanvasContext } from './context';
 import { NODE_META } from './node-meta';
+import { NO_STATUS, type NodeStatus } from './node-status';
 
 export type FlowNodeData = {
   node: WorkflowNode;
@@ -46,6 +45,8 @@ export type FlowNodeData = {
   open?: number;
   /** The box an expanded frame draws now; it grows inside the node while animating. */
   box?: { width: number; height: number };
+  /** Problems and joins, computed once per change by the editor (see `nodeStatuses`). */
+  status?: NodeStatus;
 };
 export type FlowNode = Node<FlowNodeData>;
 
@@ -57,20 +58,9 @@ function firstLine(text: string | undefined, max = 60): string {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
-/** Problems and join state of a node, for its outline, marker and join chip. */
-function useNodeStatus(id: string) {
-  const { graph, loops, check } = useCanvasContext();
-  const node = graph.nodes.find((n) => n.id === id);
-  const inputs = joinInputs(graph, id, loops).length;
-  const severity = check.nodes.get(id);
-  const messages = check.problems.filter((p) => p.nodes[0] === id).map((p) => p.message);
-  const join = inputs > 1 ? (node?.join ? joinLabel(node.join, inputs) : null) : undefined;
-  return { severity, messages, join, inputs };
-}
-
 /** Red (error) or amber (warning) marker in a node's corner, with the messages as a tooltip. */
-function ProblemMarker({ id }: { id: string }) {
-  const { severity, messages } = useNodeStatus(id);
+function ProblemMarker({ status }: { status: NodeStatus }) {
+  const { severity, messages } = status;
   if (!severity) return null;
   const Icon = severity === 'error' ? CircleAlert : TriangleAlert;
   return (
@@ -88,8 +78,8 @@ function ProblemMarker({ id }: { id: string }) {
 }
 
 /** How a node with several inputs waits for them; red when not chosen yet. */
-function JoinChip({ id }: { id: string }) {
-  const { join, inputs } = useNodeStatus(id);
+function JoinChip({ status }: { status: NodeStatus }) {
+  const { join, inputs } = status;
   if (join === undefined) return null;
   return (
     <Chip
@@ -136,6 +126,7 @@ function Card({
   id,
   type,
   selected,
+  status,
   title,
   subtitle,
   badges,
@@ -147,6 +138,7 @@ function Card({
   id: string;
   type: WorkflowNodeType;
   selected: boolean;
+  status: NodeStatus;
   title: React.ReactNode;
   subtitle?: React.ReactNode;
   badges?: React.ReactNode;
@@ -157,7 +149,7 @@ function Card({
 }) {
   const meta = NODE_META[type];
   const Icon = meta.icon;
-  const { severity } = useNodeStatus(id);
+  const { severity } = status;
   return (
     <div
       className={cn(
@@ -169,7 +161,7 @@ function Card({
       data-node-type={type}
       data-problem={severity}
     >
-      <ProblemMarker id={id} />
+      <ProblemMarker status={status} />
       {inHandle && <Handle type="target" position={Position.Left} className={handleClass} />}
       <div className="flex items-start gap-2 p-2.5">
         <span
@@ -192,7 +184,7 @@ function Card({
       <div className="flex flex-wrap gap-1 px-2.5 pb-2 empty:hidden">
         {badges}
         <RepeatChip id={id} />
-        <JoinChip id={id} />
+        <JoinChip status={status} />
       </div>
       {children}
       {outHandle && <Handle type="source" position={Position.Right} className={handleClass} />}
@@ -230,6 +222,7 @@ function InputNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   return (
     <Card
       id={id}
+      status={data.status ?? NO_STATUS}
       type="input"
       selected={selected}
       inHandle={false}
@@ -251,6 +244,7 @@ function OutputNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   return (
     <Card
       id={id}
+      status={data.status ?? NO_STATUS}
       type="output"
       selected={selected}
       outHandle={false}
@@ -305,6 +299,7 @@ function SlotNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   return (
     <Card
       id={id}
+      status={data.status ?? NO_STATUS}
       type="agent"
       selected={selected}
       className="border-dashed border-sky-300"
@@ -342,6 +337,7 @@ function BoundAgentNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   return (
     <Card
       id={id}
+      status={data.status ?? NO_STATUS}
       type="agent"
       selected={selected}
       title={
@@ -390,6 +386,7 @@ function ArtifactNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   return (
     <Card
       id={id}
+      status={data.status ?? NO_STATUS}
       type="artifact"
       selected={selected}
       className="rounded-tr-2xl border-dashed"
@@ -411,6 +408,7 @@ function ToolStepNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   return (
     <Card
       id={id}
+      status={data.status ?? NO_STATUS}
       type="toolStep"
       selected={selected}
       title={
@@ -450,6 +448,7 @@ function HumanInputNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   return (
     <Card
       id={id}
+      status={data.status ?? NO_STATUS}
       type="humanInput"
       selected={selected}
       title={n.label || 'Human input'}
@@ -471,6 +470,7 @@ function SharedStoreNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   return (
     <Card
       id={id}
+      status={data.status ?? NO_STATUS}
       type="sharedStore"
       selected={selected}
       className="border-double border-4"
@@ -509,7 +509,8 @@ function NoteNodeView({ id, data, selected }: NodeProps<FlowNode>) {
 
 function DecisionNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
-  const { severity, join } = useNodeStatus(id);
+  const status = data.status ?? NO_STATUS;
+  const { severity, join } = status;
   const { repin } = useCanvasContext();
   const evaluatorRef =
     n.type === 'decision' && n.evaluator.type === 'agent' && n.evaluator.agent.kind === 'agent'
@@ -527,7 +528,7 @@ function DecisionNodeView({ id, data, selected }: NodeProps<FlowNode>) {
     <div className="flex items-center" data-node-type="decision" data-problem={severity}>
       <div className="relative size-28 shrink-0">
         <span className="absolute top-2 right-2">
-          <ProblemMarker id={id} />
+          <ProblemMarker status={status} />
         </span>
         <Handle type="target" position={Position.Left} className={handleClass} />
         <svg viewBox="0 0 100 100" className="absolute inset-0 size-full overflow-visible">
@@ -559,7 +560,7 @@ function DecisionNodeView({ id, data, selected }: NodeProps<FlowNode>) {
           )}
           {join !== undefined && (
             <span className="mt-0.5">
-              <JoinChip id={id} />
+              <JoinChip status={status} />
             </span>
           )}
         </div>
@@ -614,25 +615,19 @@ function ExpandButton({ path, open }: { path: string; open: boolean }) {
 
 function PatternNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
-  const { kind, check, graph, loops, repin } = useCanvasContext();
+  const { kind, patterns, repin } = useCanvasContext();
   const ref = n.type === 'pattern' ? n.pattern : undefined;
   const pinned = usePinned('pattern', ref?.id, ref?.version);
-  const { severity } = useNodeStatus(id);
+  const status = data.status ?? NO_STATUS;
+  const { severity } = status;
   if (n.type !== 'pattern' || !ref) return null;
   const pattern = pinned.state === 'ready' ? pinned.entity : undefined;
   // Until the pattern arrives, give the ports its edges use a handle, so they stay attached.
-  const used = (side: 'source' | 'target') =>
-    [
-      ...new Set(
-        graph.edges.flatMap((e) => (e[side].node === id && e[side].port ? [e[side].port] : [])),
-      ),
-    ].map((port) => ({ id: port, name: '…' }));
+  const used = (ids: string[] = []) => ids.map((port) => ({ id: port, name: '…' }));
   const ports = pattern
     ? patternPorts(pattern)
-    : { inputs: used('target'), outputs: used('source') };
-  const slots = pattern
-    ? (listSlots(pattern, n.repeat, check.resolver.pattern ?? (() => undefined)) ?? [])
-    : [];
+    : { inputs: used(status.usedPorts?.inputs), outputs: used(status.usedPorts?.outputs) };
+  const slots = pattern ? (listSlots(pattern, n.repeat, patterns ?? (() => undefined)) ?? []) : [];
   const bound = slots.filter((s) => n.bindings[s.key]?.kind === 'agent').length;
   const forked = isBranchVersion(ref.version);
   const rows = Math.max(ports.inputs.length, ports.outputs.length, 1);
@@ -647,7 +642,7 @@ function PatternNodeView({ id, data, selected }: NodeProps<FlowNode>) {
       data-node-type="pattern"
       data-problem={severity}
     >
-      <ProblemMarker id={id} />
+      <ProblemMarker status={status} />
       <div className="flex items-start gap-2 p-2.5">
         <span
           className={cn(
@@ -698,7 +693,7 @@ function PatternNodeView({ id, data, selected }: NodeProps<FlowNode>) {
                     <span className="truncate" data-port={input.id}>
                       {input.name}
                     </span>
-                    {portInputs(graph, id, input.id, loops).length > 1 && (
+                    {(status.portInputs?.[input.id] ?? 0) > 1 && (
                       <span
                         className={cn(
                           'ml-1 shrink-0 rounded px-1 text-[10px]',
@@ -764,7 +759,8 @@ function PatternFrameView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
   const ref = n.type === 'pattern' ? n.pattern : undefined;
   const pinned = usePinned('pattern', ref?.id, ref?.version);
-  const { severity } = useNodeStatus(id);
+  const status = data.status ?? NO_STATUS;
+  const { severity } = status;
   if (n.type !== 'pattern' || !ref) return null;
   const pattern = pinned.state === 'ready' ? pinned.entity : undefined;
   const forked = isBranchVersion(ref.version);
@@ -782,7 +778,7 @@ function PatternFrameView({ id, data, selected }: NodeProps<FlowNode>) {
       data-expanded="true"
       data-problem={severity}
     >
-      <ProblemMarker id={id} />
+      <ProblemMarker status={status} />
       <div className="flex items-center gap-2 px-3 pt-2.5" style={{ opacity: data.open ?? 1 }}>
         <span
           className={cn(
@@ -841,17 +837,21 @@ export function flowNodeType(type: WorkflowNodeType): string {
   return `wf-${type}`;
 }
 
+/**
+ * Memoized: the editor keeps a node's props (and `data`) identical while nothing about it
+ * changed, so dragging or editing one node doesn't re-render the others.
+ */
 export const nodeTypes: NodeTypes = {
-  'wf-input': InputNodeView,
-  'wf-output': OutputNodeView,
-  'wf-agent': AgentNodeView,
-  'wf-decision': DecisionNodeView,
-  'wf-artifact': ArtifactNodeView,
-  'wf-toolStep': ToolStepNodeView,
-  'wf-humanInput': HumanInputNodeView,
-  'wf-sharedStore': SharedStoreNodeView,
-  'wf-note': NoteNodeView,
-  'wf-pattern': PatternNodeView,
-  'wf-pattern-frame': PatternFrameView,
-  'wf-port': PortNodeView,
+  'wf-input': memo(InputNodeView),
+  'wf-output': memo(OutputNodeView),
+  'wf-agent': memo(AgentNodeView),
+  'wf-decision': memo(DecisionNodeView),
+  'wf-artifact': memo(ArtifactNodeView),
+  'wf-toolStep': memo(ToolStepNodeView),
+  'wf-humanInput': memo(HumanInputNodeView),
+  'wf-sharedStore': memo(SharedStoreNodeView),
+  'wf-note': memo(NoteNodeView),
+  'wf-pattern': memo(PatternNodeView),
+  'wf-pattern-frame': memo(PatternFrameView),
+  'wf-port': memo(PortNodeView),
 };

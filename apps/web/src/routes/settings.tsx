@@ -190,13 +190,13 @@ function SettingsForm({ saved }: { saved: Settings }) {
         </Section>
 
         <Section
-          title="Built-in patterns"
-          description="The 10 patterns the app ships with are ordinary entities: edit or delete them like any other."
+          title="Built-ins and demo content"
+          description="The 10 built-in patterns and the demo content (two example projects with their agents, skills and tool presets) are ordinary entities: edit or delete them like any other."
           actions={<RestoreDefaultsButton />}
         >
           <p className="text-xs text-muted-foreground">
-            Restore defaults adds back every built-in pattern that was deleted, as its next version.
-            Built-ins you edited are left as they are.
+            Restore defaults adds back each of them that was deleted, as its next version, and
+            recreates the demo workspace if it is gone. Anything you edited is left as it is.
           </p>
         </Section>
 
@@ -231,6 +231,8 @@ function SettingsForm({ saved }: { saved: Settings }) {
   );
 }
 
+const plural = (n: number, noun: string) => `${String(n)} ${noun}${n === 1 ? '' : 's'}`;
+
 function RestoreDefaultsButton() {
   const [busy, setBusy] = useState(false);
   const load = useLibrary((st) => st.load);
@@ -238,14 +240,15 @@ function RestoreDefaultsButton() {
     setBusy(true);
     try {
       const { restored } = await api.restoreDefaults();
-      await load('pattern');
+      await Promise.all([...new Set(restored.map((r) => r.kind))].map((k) => load(k)));
       if (restored.length === 0) {
-        toast.success('Nothing to restore', { description: 'Every built-in pattern is there.' });
+        toast.success('Nothing to restore', {
+          description: 'Every built-in pattern and demo entity is there.',
+        });
       } else {
-        toast.success(
-          `Restored ${restored.length === 1 ? '1 built-in pattern' : `${String(restored.length)} built-in patterns`}`,
-          { description: restored.map((r) => `${r.name} (${r.version})`).join(', ') },
-        );
+        toast.success(`Restored ${plural(restored.length, 'default')}`, {
+          description: restored.map((r) => `${r.name} (${r.version})`).join(', '),
+        });
       }
     } catch (err) {
       toast.error('Could not restore the defaults', {
