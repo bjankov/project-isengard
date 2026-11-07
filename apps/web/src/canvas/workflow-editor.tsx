@@ -86,7 +86,7 @@ import { SaveAsTemplateDialog } from './save-as-template';
 import { useWorkflowCheck } from './use-workflow-check';
 
 const GRID = 16;
-const FIT_VIEW = { padding: 0.25, maxZoom: 1 };
+const FIT_VIEW = { padding: 0.08, maxZoom: 1 };
 const DEFAULT_SIZE = { width: 224, height: 72 };
 const NOTE_SIZE = { width: 224, height: 112 };
 
@@ -1071,7 +1071,12 @@ export function WorkflowEditor({
                 maxZoom={2}
               >
                 <Background variant={BackgroundVariant.Dots} gap={GRID} size={1} />
-                <MiniMap pannable zoomable className="!rounded-md !border" />
+                <MiniMap
+                  pannable
+                  zoomable
+                  className="!rounded-md !border"
+                  style={{ width: 160, height: 104 }}
+                />
                 <Controls showInteractive={false} fitViewOptions={FIT_VIEW} />
               </ReactFlow>
             </CanvasContext.Provider>

@@ -43,6 +43,23 @@ function loopPath(sx: number, sy: number, tx: number, ty: number): [string, numb
   return [path, mx, my];
 }
 
+/**
+ * An edge running right to left between nodes on about the same row (e.g. an agent writing
+ * a shared store placed before it): an arc over the row, instead of an S through it.
+ */
+function arcPath(sx: number, sy: number, tx: number, ty: number): [string, number, number] {
+  const height = Math.min(sy, ty) - 90;
+  const c1 = { x: sx + 120, y: height };
+  const c2 = { x: tx - 120, y: height };
+  const path = `M ${sx},${sy} C ${c1.x},${c1.y} ${c2.x},${c2.y} ${tx},${ty}`;
+  const mx = (sx + 3 * c1.x + 3 * c2.x + tx) / 8;
+  const my = (sy + 3 * c1.y + 3 * c2.y + ty) / 8;
+  return [path, mx, my];
+}
+
+const isBackwardOnRow = (sx: number, sy: number, tx: number, ty: number) =>
+  tx < sx - 40 && Math.abs(ty - sy) < 48;
+
 function WorkflowEdgeView({
   id,
   sourceX,
@@ -59,7 +76,9 @@ function WorkflowEdgeView({
   const { edge, back, cap, uncapped, problem } = data;
   const [path, labelX, labelY] = back
     ? loopPath(sourceX, sourceY, targetX, targetY)
-    : getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
+    : isBackwardOnRow(sourceX, sourceY, targetX, targetY)
+      ? arcPath(sourceX, sourceY, targetX, targetY)
+      : getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
   const sequencing = edge.payload === 'none';
 
   return (

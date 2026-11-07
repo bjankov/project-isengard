@@ -376,18 +376,18 @@ function planBuildTest(workspacePath: string): Project {
       ],
     },
     layout: layoutOf({
-      task: [0, 160],
-      planner: [320, 160],
-      plan: [640, 160],
-      executor: [960, 160],
-      code: [1280, 160],
-      tester: [1280, 368],
-      'tests-pass': [1600, 352],
-      result: [1920, 368],
-      'note-start': [0, 0, 256, 112],
-      'note-context': [640, 0, 288, 112],
-      'note-loop': [960, 480, 288, 112],
-      'note-preview': [320, 336, 256, 96],
+      'note-start': [0, 0, 256, 96],
+      'note-preview': [288, 0, 256, 96],
+      task: [0, 128],
+      planner: [288, 128],
+      plan: [576, 128],
+      result: [864, 128],
+      executor: [0, 352],
+      code: [288, 352],
+      tester: [576, 352],
+      'tests-pass': [920, 332],
+      'note-context': [0, 560, 256, 112],
+      'note-loop': [288, 560, 288, 112],
     }),
   };
 }
@@ -397,7 +397,7 @@ function ticketRouter(workspacePath: string): Project {
     id: ids.projects.ticketRouter,
     name: 'Ticket router',
     description:
-      'A router agent sorts each ticket into bug, feature or question, and each kind takes its own path: bugs to a maker-checker pair, features to a planner with human approval, questions to a researcher.',
+      'A router agent sorts each ticket into bug, question or feature, and each kind takes its own path: bugs to a maker-checker pair, questions to a researcher, features to a planner with human approval.',
     workspacePath,
     overrides: {},
     workflow: {
@@ -419,12 +419,12 @@ function ticketRouter(workspacePath: string): Project {
             type: 'agent',
             agent: { kind: 'agent', agent: ref('agent', ids.agents.router) },
             criteria:
-              'bug: something that used to work, or should work, is broken.\nfeature: a request for new behaviour.\nquestion: someone wants to know how something works.',
+              'bug: something that used to work, or should work, is broken.\nquestion: someone wants to know how something works.\nfeature: a request for new behaviour.',
           },
           exits: [
             { id: 'bug', label: 'bug' },
-            { id: 'feature', label: 'feature' },
             { id: 'question', label: 'question' },
+            { id: 'feature', label: 'feature' },
           ],
         },
         {
@@ -465,7 +465,7 @@ function ticketRouter(workspacePath: string): Project {
         },
         note(
           'note-router',
-          'Only decision nodes branch. Here the Router agent reads the ticket and picks exactly one exit: bug, feature or question.',
+          'Only decision nodes branch. Here the Router agent reads the ticket and picks exactly one exit: bug, question or feature.',
         ),
         note(
           'note-pattern',
@@ -479,8 +479,8 @@ function ticketRouter(workspacePath: string): Project {
       edges: [
         edge('ticket', 'kind'),
         edge('kind', 'fix', { fromPort: 'bug', toPort: 'in' }),
-        edge('kind', 'planner', { fromPort: 'feature' }),
         edge('kind', 'researcher', { fromPort: 'question' }),
+        edge('kind', 'planner', { fromPort: 'feature' }),
         edge('planner', 'approve'),
         edge('approve', 'planner', { fromPort: 'reject', history: 'all' }),
         edge('fix', 'reply', { fromPort: 'out' }),
@@ -489,16 +489,16 @@ function ticketRouter(workspacePath: string): Project {
       ],
     },
     layout: layoutOf({
-      ticket: [0, 288],
-      kind: [320, 272],
-      fix: [672, 96],
-      planner: [672, 288],
-      approve: [992, 272],
-      researcher: [672, 480],
-      reply: [1344, 288],
-      'note-router': [256, 96, 256, 112],
-      'note-pattern': [992, 0, 288, 112],
-      'note-human': [992, 464, 288, 112],
+      'note-router': [0, 128, 256, 112],
+      ticket: [0, 304],
+      kind: [344, 284],
+      'note-pattern': [576, -64, 288, 112],
+      fix: [576, 96],
+      researcher: [576, 304],
+      planner: [576, 512],
+      approve: [920, 492],
+      reply: [1152, 304],
+      'note-human': [1120, 528, 256, 112],
     }),
   };
 }
